@@ -1,0 +1,10 @@
+<!--
+  Add inside <ossec_config> in the AGENT's ossec.conf (/var/ossec/etc/ossec.conf) on each
+  endpoint running clickfixed. The location must match [outputs.file].path in the
+  clickfixed config. The Wazuh agent runs as root, so the 0600 alert file is readable.
+-->
+<localfile>
+  <log_format>json</log_format>
+  <location>/var/log/clickfixed/alerts.json</location>
+  <only-future-events>yes</only-future-events>
+</localfile>

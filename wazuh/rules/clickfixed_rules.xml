@@ -1,0 +1,55 @@
+<!--
+  clickfixed Wazuh rules. GENERATED from the [[alerts.severity]] mapping:
+    clickfixed alerts wazuh-rules --config <config.toml> > clickfixed_rules.xml
+  Do not edit levels here; change the mapping and regenerate.
+  Rule ids 100800-100899.
+-->
+<group name="clickfixed,">
+
+  <!-- Base: clickfixed events, decoded by the built-in json decoder. -->
+  <rule id="100800" level="0">
+    <decoded_as>json</decoded_as>
+    <field name="event.module">^clickfixed$</field>
+    <description>clickfixed event</description>
+  </rule>
+
+  <!-- Base: clickfixed events, decoded by decoders/clickfixed_decoders.xml. -->
+  <rule id="100801" level="0">
+    <decoded_as>clickfixed</decoded_as>
+    <description>clickfixed event</description>
+  </rule>
+
+  <!-- band "medium": verdict suspicious, score >= 0 -->
+  <rule id="100810" level="7">
+    <if_sid>100800, 100801</if_sid>
+    <field name="clickfixed.severity.name">^medium$</field>
+    <description>clickfixed medium: $(event.action) on $(host.name), score $(clickfixed.score)</description>
+    <mitre>
+      <id>T1204.004</id>
+    </mitre>
+    <group>clickfixed_medium,</group>
+  </rule>
+
+  <!-- band "high": verdict malicious, score >= 0 -->
+  <rule id="100811" level="12">
+    <if_sid>100800, 100801</if_sid>
+    <field name="clickfixed.severity.name">^high$</field>
+    <description>clickfixed high: $(event.action) on $(host.name), score $(clickfixed.score)</description>
+    <mitre>
+      <id>T1204.004</id>
+    </mitre>
+    <group>clickfixed_high,attack,</group>
+  </rule>
+
+  <!-- band "critical": verdict malicious, score >= 3 -->
+  <rule id="100812" level="14">
+    <if_sid>100800, 100801</if_sid>
+    <field name="clickfixed.severity.name">^critical$</field>
+    <description>clickfixed critical: $(event.action) on $(host.name), score $(clickfixed.score)</description>
+    <mitre>
+      <id>T1204.004</id>
+    </mitre>
+    <group>clickfixed_critical,attack,</group>
+  </rule>
+
+</group>

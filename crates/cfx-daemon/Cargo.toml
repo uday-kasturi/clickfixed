@@ -1,0 +1,22 @@
+[package]
+name = "cfx-daemon"
+description = "clickfixed endpoint daemon: wires collectors to the engine; warn/block."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "clickfixed"
+path = "src/main.rs"
+
+[dependencies]
+cfx-engine.workspace = true
+cfx-collect.workspace = true
+cfx-alert.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+toml.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+clap.workspace = true

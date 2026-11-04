@@ -1,0 +1,13 @@
+[package]
+name = "cfx-collect"
+description = "Platform collectors (clipboard writes, exec events) behind one trait."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+tracing.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+x11rb = { version = "0.13", features = ["xfixes", "res"] }

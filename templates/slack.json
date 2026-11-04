@@ -1,0 +1,39 @@
+{
+  "text": "{{fmt.title|slack}} ({{clickfixed.severity.name}}, score {{fmt.score}})",
+  "attachments": [
+    {
+      "color": "{{clickfixed.severity.slack_color}}",
+      "blocks": [
+        {
+          "type": "header",
+          "text": { "type": "plain_text", "text": "ClickFix {{clickfixed.verdict}}: {{rule.name}}" }
+        },
+        {
+          "type": "section",
+          "fields": [
+            { "type": "mrkdwn", "text": "*Host*\n{{host.name|slack}}" },
+            { "type": "mrkdwn", "text": "*User*\n{{user.name|slack}}" },
+            { "type": "mrkdwn", "text": "*Score*\n{{fmt.score}} ({{clickfixed.severity.name}})" },
+            { "type": "mrkdwn", "text": "*Origin*\n{{fmt.origin|slack}}" },
+            { "type": "mrkdwn", "text": "*Target*\n{{clickfixed.target.kind}}" },
+            { "type": "mrkdwn", "text": "*Process*\n{{fmt.process|slack}}" }
+          ]
+        },
+        {
+          "type": "section",
+          "text": { "type": "mrkdwn", "text": "*Signals*\n{{fmt.features|slack}}\n*Dampened by*\n{{fmt.dampens|slack}}\n*Context*\n{{fmt.multipliers|slack}}" }
+        },
+        {
+          "type": "section",
+          "text": { "type": "mrkdwn", "text": "*Decoded command*\n```{{fmt.decoded|slack}}```" }
+        },
+        {
+          "type": "context",
+          "elements": [
+            { "type": "mrkdwn", "text": "{{threat.technique.subtechnique.id.0}} · {{clickfixed.analytic.id}} · sha256 `{{clickfixed.command.sha256}}` · dedupe `{{clickfixed.dedupe_key}}`" }
+          ]
+        }
+      ]
+    }
+  ]
+}

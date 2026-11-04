@@ -1,0 +1,16 @@
+[package]
+name = "cfx-eval"
+description = "Evaluation harness: corpus in, detection / false-positive / latency / evasion metrics out."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+cfx-engine.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+csv.workspace = true
+clap.workspace = true
+base64 = "0.22"
+flate2 = "1"

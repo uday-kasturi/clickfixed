@@ -1,0 +1,101 @@
+# clickfixed default allowlist.
+#
+# Principle: allowlist on what the attacker does NOT control.
+#   Attacker controls: the command text, their own domain.
+#   Attacker does not control: which site the user actually visited (origin class), the
+#   app the text came from (source_app), structural facts that make a payload benign
+#   (shape).
+#
+# Every entry must carry at least one of `origin_class`, `source_app` or `shape`; the
+# loader rejects anything else. There is no field for a literal command string.
+#
+# Entries DAMPEN named features (subtract `weight`, floored at 0). They never suppress the
+# verdict: a dampened Chocolatey bootstrap still scores on a Run key write or -w hidden.
+#
+# Every dampen is logged with the entry id.
+
+# ── Tier 1: context entries ──────────────────────────────────────────────
+
+[[allow]]
+id = "vendor-installer"
+tier = "context"
+reason = "Pipe-to-shell installers copied from an explicitly classified vendor docs domain into a terminal (rustup, Homebrew, Docker, Chocolatey)."
+dampens = ["fetch_and_execute", "download_then_execute", "execution_policy_bypass"]
+weight = -0.8
+requires = { origin_class = "vendor_docs", target = "terminal" }
+
+[[allow]]
+id = "vendor-msi"
+tier = "context"
+reason = "Vendors document msiexec /i <https URL> (AWS CLI). Partial dampen only: msiexec from a URL plus any second signal still warns."
+dampens = ["msiexec_remote"]
+weight = -0.5
+requires = { origin_class = "vendor_docs", target = "terminal" }
+
+[[allow]]
+id = "internal-runbook"
+tier = "context"
+reason = "IT runbook one-liners copied from an internal wiki into a terminal by engineering/admin users. The internal domain list is itself an evasion target; keep it short."
+dampens = ["fetch_and_execute", "download_then_execute", "execution_policy_bypass"]
+weight = -0.6
+requires = { origin_class = "internal", target = "terminal", role = ["engineering", "admin"] }
+
+# ── Tier 2: shape entries ────────────────────────────────────────────────
+
+[[allow]]
+id = "jwt"
+tier = "shape"
+reason = "Whole clipboard is a JWT: base64url segments whose header decodes to a JOSE object with `alg`."
+dampens = ["interpreter_entropy", "obfuscation_layers", "encoding_marker"]
+weight = -1.0
+requires = { shape = ["jwt"] }
+
+[[allow]]
+id = "pem-block"
+tier = "shape"
+reason = "PEM armor (certificate / private key) with no interpreter token."
+dampens = ["interpreter_entropy", "obfuscation_layers", "encoding_marker"]
+weight = -1.0
+requires = { shape = ["pem", "no_interpreter_token"] }
+
+[[allow]]
+id = "decode-to-stdout"
+tier = "shape"
+reason = "Pipeline terminates at base64 -d with nothing executing the output (kubectl get secret ... | base64 -d)."
+dampens = ["encoding_marker"]
+weight = -0.4
+requires = { shape = ["pipeline_ends_base64_decode", "no_interpreter_token"] }
+
+[[allow]]
+id = "hex-digest"
+tier = "shape"
+reason = "Whole clipboard is a 32/40/64/128-char hex digest (commit SHA, checksum)."
+dampens = ["interpreter_entropy", "obfuscation_layers"]
+weight = -1.0
+requires = { shape = ["hex_digest"] }
+
+[[allow]]
+id = "env-lines"
+tier = "shape"
+reason = "KEY=VALUE lines (.env, Docker auth) with no interpreter token."
+dampens = ["interpreter_entropy", "obfuscation_layers", "encoding_marker"]
+weight = -1.0
+requires = { shape = ["env_lines", "no_interpreter_token"] }
+
+[[allow]]
+id = "powershell-file-local"
+tier = "shape"
+reason = "powershell -File pointing at a local or UNC path (SCCM/Intune), no -Command/-enc inline content and no URL."
+dampens = ["execution_policy_bypass"]
+weight = -0.2
+requires = { shape = ["powershell_file_local"] }
+
+# ── Tier 3: literal entries (OS/crypto anchor only) ──────────────────────
+
+[[allow]]
+id = "password-manager-source"
+tier = "literal"
+reason = "Content placed on the clipboard by a known password manager. The daemon also suppresses and never logs these; this entry only matters for offline evaluation."
+dampens = ["interpreter_entropy", "obfuscation_layers", "encoding_marker"]
+weight = -1.0
+requires = { source_app = ["keepassxc", "1password", "bitwarden", "lastpass", "enpass", "gopass", "seahorse"] }

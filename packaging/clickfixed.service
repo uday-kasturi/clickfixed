@@ -1,0 +1,18 @@
+# systemd user unit: cp to ~/.config/systemd/user/ then `systemctl --user enable --now clickfixed`
+[Unit]
+Description=clickfixed ClickFix paste-time detector
+After=graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+# Alerting secrets (CFX_JIRA_API_TOKEN, CFX_SLACK_WEBHOOK_URL, ...) as KEY=value lines.
+# chmod 600. The leading "-" makes the file optional when no secret-bearing output is on.
+EnvironmentFile=-%h/.config/clickfixed/env
+ExecStart=%h/.cargo/bin/clickfixed run --config %h/.config/clickfixed/config.toml
+Restart=on-failure
+# Exit 2 = bad config or missing secret: fail visibly instead of restart-looping.
+RestartPreventExitStatus=2
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=graphical-session.target

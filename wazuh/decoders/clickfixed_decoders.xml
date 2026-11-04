@@ -1,0 +1,18 @@
+<!--
+  clickfixed decoder. Each line in the alert log is one ECS JSON object.
+
+  This child of the built-in "json" decoder claims only clickfixed lines (they carry
+  "module":"clickfixed" in the event object) and runs the JSON plugin decoder, so every
+  field becomes available to rules by its dotted name: event.action, host.name,
+  clickfixed.score, clickfixed.severity.name, clickfixed.dedupe_key, ...
+
+  use_own_name makes rules see decoded_as = clickfixed. The ruleset also has a base rule
+  for decoded_as = json, so the band rules match whichever decoder your manager applies.
+  Install to /var/ossec/etc/decoders/ on the MANAGER.
+-->
+<decoder name="clickfixed">
+  <parent>json</parent>
+  <use_own_name>true</use_own_name>
+  <prematch>"module":"clickfixed"</prematch>
+  <plugin_decoder>JSON_Decoder</plugin_decoder>
+</decoder>

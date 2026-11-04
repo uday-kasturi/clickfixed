@@ -1,0 +1,32 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/cfx-engine",
+    "crates/cfx-collect",
+    "crates/cfx-daemon",
+    "crates/cfx-eval",
+    "crates/cfx-alert",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.88"
+license = "Apache-2.0"
+
+[workspace.dependencies]
+cfx-engine = { path = "crates/cfx-engine" }
+cfx-collect = { path = "crates/cfx-collect" }
+cfx-alert = { path = "crates/cfx-alert" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+clap = { version = "4", features = ["derive"] }
+csv = "1"
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = "symbols"

@@ -1,0 +1,20 @@
+{
+  "create": {
+    "fields": {
+      "project": { "key": "{{jira.project}}" },
+      "issuetype": { "name": "{{jira.issue_type}}" },
+      "summary": "ClickFix {{clickfixed.verdict}} on {{host.name}}: {{rule.name}}",
+      "priority": { "name": "{{clickfixed.severity.jira_priority}}" },
+      "labels": ["clickfixed", "T1204.004"],
+      "description": "h3. {{fmt.title|jira}}\n\n||Field||Value||\n|Severity|{{clickfixed.severity.name}} (score {{fmt.score}}, verdict {{clickfixed.verdict}})|\n|Host / user|{{host.name|jira}} / {{user.name|jira}}|\n|Origin|{{fmt.origin|jira}}|\n|Target|{{clickfixed.target.kind}}|\n|Process|{{fmt.process|jira}}|\n|Signals|{{fmt.features|jira}}|\n|Dampened by|{{fmt.dampens|jira}}|\n|Context|{{fmt.multipliers|jira}}|\n|ATT&CK|{{threat.technique.subtechnique.id.0}} ({{threat.technique.subtechnique.name.0}}), analytic {{clickfixed.analytic.id}}|\n|Command sha256|{{clickfixed.command.sha256}}|\n|Dedupe key|{{clickfixed.dedupe_key}}|\n\nh4. Decoded command\n{noformat}{{fmt.decoded|jira}}{noformat}\n\n_Raw clipboard content is never sent. Repeat sightings of this command on this host are added as comments._"
+    }
+  },
+  "comment": {
+    "body": "*Seen again*: {{event.action}} at {{@timestamp}} ({{clickfixed.severity.name}}, score {{fmt.score}}).\nProcess: {{fmt.process|jira}}\nOrigin: {{fmt.origin|jira}}\nSignals: {{fmt.features|jira}}\nEvent id: {{event.id}}"
+  },
+  "update": {
+    "fields": {
+      "priority": { "name": "{{clickfixed.severity.jira_priority}}" }
+    }
+  }
+}

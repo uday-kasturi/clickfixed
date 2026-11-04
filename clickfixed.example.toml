@@ -1,0 +1,132 @@
+# clickfixed daemon config. Copy to ~/.config/clickfixed/config.toml.
+
+# warn: desktop notification. block: also replace the clipboard on a Block verdict.
+mode = "warn"
+
+# standard | engineering | admin | unknown. Tunes thresholds (admin = stricter). Never whitelists.
+role = "engineering"
+
+# proc: unprivileged /proc polling (lossy for very short-lived processes).
+# audit: tail auditd (root + `scripts/audit-rules.sh`).
+exec_source = "proc"
+audit_log = "/var/log/audit/audit.log"
+
+hash_buffer_ttl_secs = 21600
+notify = true
+# reports_dir = "/home/you/.local/state/clickfixed/reports"
+
+# Default-deny origin classes. Only hosts listed here (or their subdomains) ever satisfy an
+# allowlist context entry. Keep both lists short: each entry is an evasion target.
+[domains]
+vendor_docs = [
+  "rustup.rs", "rust-lang.org", "brew.sh", "docs.docker.com", "deno.land", "python-poetry.org",
+  "docs.astral.sh", "bun.sh", "nodejs.org", "kubernetes.io", "helm.sh", "go.dev",
+  "chocolatey.org", "learn.microsoft.com", "docs.aws.amazon.com", "cloud.google.com",
+]
+internal = [
+  # "wiki.corp.example",
+]
+
+# ---------------------------------------------------------------------------------------
+# Alerting. Every output renders the same ECS alert (see docs/sample-alert.json).
+# Secrets are NEVER written here: a field that needs one names an environment variable
+# with "${VAR}". All referenced variables are checked at startup; a missing one stops
+# the daemon with its name. See .env.example.
+# ---------------------------------------------------------------------------------------
+[alerts]
+# host = "ws-17"         # default: system hostname
+# user = "alice"         # default: $SUDO_USER, then $USER
+
+[alerts.dedupe]
+# Same dedupe key (host + command hash) and same action within this window: dropped
+# before any output, unless the severity is higher. 0 disables.
+suppress_window_secs = 3600
+
+# Severity mapping: the ONE place thresholds turn into output severities. The engine
+# decides the verdict (suspicious = warn, malicious = block); a band picks how that
+# verdict + score renders in every output. Lowest to highest. After changing this, regenerate
+# the Wazuh rules: clickfixed alerts wazuh-rules --config <this file>
+[[alerts.severity]]
+name = "medium"
+verdict = "suspicious"
+min_score = 0.0
+wazuh_level = 7
+syslog = 4          # warning
+cef = 5
+ecs = 47
+slack_color = "#e8a317"
+jira_priority = "Medium"
+
+[[alerts.severity]]
+name = "high"
+verdict = "malicious"
+min_score = 0.0
+wazuh_level = 12
+syslog = 2          # critical
+cef = 8
+ecs = 73
+slack_color = "#d40e0d"
+jira_priority = "High"
+
+[[alerts.severity]]
+name = "critical"
+verdict = "malicious"
+min_score = 3.0
+wazuh_level = 14
+syslog = 1          # alert
+cef = 10
+ecs = 99
+slack_color = "#6b0000"
+jira_priority = "Highest"
+
+# JSON lines (ECS) on stdout. Logs go to stderr, so this is safe to pipe.
+[outputs.stdout]
+enabled = false
+
+# JSON lines (ECS) appended to a file, for Wazuh/Filebeat/Splunk UF to tail. Mode 0600.
+[outputs.file]
+enabled = true
+# path = "/var/log/clickfixed/alerts.json"   # default: ~/.local/state/clickfixed/alerts.json
+# min_severity = "medium"
+
+# CEF over syslog. transport: unix (path) | udp | tcp (host:port).
+[outputs.syslog]
+enabled = false
+transport = "unix"
+address = "/dev/log"
+facility = "local4"
+# format = "rfc5424"   # default: rfc3164 for unix, rfc5424 for udp/tcp
+
+# Webhooks: one block per target. The payload is a template FILE (paths are relative to
+# this config), so new targets (Teams, PagerDuty, ...) need a template, not a rebuild.
+[[outputs.webhook]]
+name = "slack"
+enabled = false
+url = "${CFX_SLACK_WEBHOOK_URL}"   # Slack incoming-webhook URLs are credentials
+template = "templates/slack.json"
+min_severity = "high"
+
+[[outputs.webhook]]
+name = "generic"
+enabled = false
+url = "https://soar.example.invalid/ingest/clickfixed"
+template = "templates/generic.json"
+headers = { Authorization = "Bearer ${CFX_GENERIC_WEBHOOK_TOKEN}" }
+timeout_secs = 5
+retries = 2
+
+# Jira: one issue per host + command. Repeats comment on the open issue (and raise its
+# priority if more severe) instead of opening a new ticket.
+[outputs.jira]
+enabled = false
+base_url = "https://yourorg.atlassian.net"
+project = "SEC"
+issue_type = "Bug"
+auth = "basic"                     # basic (Cloud: email + API token) | bearer (Data Center PAT)
+user = "${CFX_JIRA_USER}"
+token = "${CFX_JIRA_API_TOKEN}"    # must be an env var reference
+template = "templates/jira.json"   # create / comment / update payloads = the field mapping
+search_path = "/rest/api/2/search/jql"   # Data Center / Server: "/rest/api/2/search"
+dedupe_label_prefix = "clickfixed-"
+on_duplicate = "comment"           # comment | skip
+min_severity = "high"

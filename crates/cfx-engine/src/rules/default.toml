@@ -1,0 +1,279 @@
+# clickfixed default rule set (v1)
+#
+# Score = sum of feature weights (max per feature across decode layers)
+#         - allowlist dampening (per feature, floored at 0)
+#         x context multipliers
+# Verdict: score >= warn -> Warn, score >= block -> Block.
+#
+# Design rules (see docs/THREAT_MODEL.md):
+#   * No feature for command length or `&&` count. docker/ffmpeg/kubectl look identical.
+#   * Entropy only counts with an interpreter token present (computed.interpreter_entropy).
+#   * Every behavioral weight is below `warn` on its own, so one behavioral feature with
+#     no context never warns. Context (Run dialog, unknown browser origin) or a second
+#     feature is needed.
+#   * All patterns are case-insensitive and run on every decoded layer.
+
+version = 1
+
+[thresholds]
+warn = 1.0
+block = 2.0
+
+[thresholds.role_adjust]
+# Admins are the high-value targets. Stricter, never looser.
+admin = -0.15
+engineering = 0.0
+standard = 0.0
+unknown = 0.0
+
+[multipliers]
+# Almost no benign workflow pastes into Win+R.
+run_dialog = 1.6
+# Win+X: the documented RunMRU evasion (Havoc campaign).
+quick_access_menu = 1.6
+# Browser origin that is not explicitly classified. Default-deny.
+browser_unknown_origin = 1.3
+
+[computed.trailing_decoy_prose]
+# Executable portion followed by human-facing prose: "# I am not a robot - reCAPTCHA
+# Verification ID: 2165", "Cloud Identificator: 2031". Benign commands rarely carry it.
+weight = 0.8
+
+[computed.interpreter_entropy]
+# A long high-entropy token AND an interpreter token in the same observation.
+weight = 0.3
+min_token_len = 32
+min_bits = 4.5
+
+[computed.obfuscation_layers]
+# Each resolved decode layer adds this, only when an interpreter token is present in some
+# layer. Heavy obfuscation is itself a signal; the wrapper's weight is kept when the inner
+# layer resolves.
+weight_per_layer = 0.3
+max_layers = 3
+
+# ───────────────────────────── STRUCTURAL ─────────────────────────────
+
+[[rule]]
+id = "mshta_remote"
+class = "structural"
+weight = 1.2
+description = "mshta with a remote URL, UNC path or inline script as the first argument. Near-always malicious."
+when = [[ '''\bmshta(?:\.exe)?["']?\s+["']?(?:https?://|\\\\|javascript:|vbscript:|about:)''' ]]
+
+[[rule]]
+id = "media_ext_as_code"
+class = "structural"
+weight = 0.9
+description = "A URL with a media/document extension fetched and handed to an interpreter (Lumma .mp4, Vidar .png)."
+when = [[
+  '''(?:\biex\b|invoke-expression|\|\s*(?:ba|z|da)?sh\b|\bmshta\b|\bwscript\b|\bcscript\b|\|\s*python|\b(?:ba|z)?sh\s+-c\b|\bregsvr32\b|\brundll32\b|\bpython[0-9.]*\s+-c\b)''',
+  '''https?://[^\s'"]+\.(?:mp3|mp4|m4a|wav|avi|mov|webm|png|jpe?g|gif|bmp|webp|svg|ico|update|pdf|docx?|xlsx?|woff2?|ttf|css|txt|log)\b''',
+]]
+
+[[rule]]
+id = "binary_reconstruction"
+class = "structural"
+weight = 1.0
+description = "Rebuilding a PE from text: set /p \"MZ\" header writes, copy /b concatenation, findstr /V into an executable."
+when = [
+  [ '''\bset\s*/p\s*["=]*\s*"?mz''' ],
+  [ '''\bcopy\s+/b\b\s+\S+\s*\+\s*\S+''' ],
+  [ '''\bfindstr(?:\.exe)?\s+/v\b''', '''>>?\s*["']?\S*\.(?:exe|dll|scr|com)\b''' ],
+]
+
+[[rule]]
+id = "regsvr32_remote"
+class = "structural"
+weight = 1.2
+description = "regsvr32 /i: pointing at a remote or UNC scriptlet (Squiblydoo)."
+when = [[ '''\bregsvr32(?:\.exe)?\b[^\n]*?/i:\s*["']?(?:https?://|\\\\)''' ]]
+
+[[rule]]
+id = "rundll32_user_path"
+class = "structural"
+weight = 1.0
+description = "rundll32 loading from a user-writable, temp, UNC or remote path, or a javascript: URL. System32 DLLs do not match."
+when = [[ '''\brundll32(?:\.exe)?["']?\s+["']?(?:%te?mp%|%(?:local)?appdata%|%public%|%userprofile%|%programdata%|\$env:|[a-z]:\\users\\|[a-z]:\\programdata\\|\\\\|https?://|javascript:|\.\.?\\|[^\s,"']*\\(?:temp|downloads|appdata)\\)''' ]]
+
+[[rule]]
+id = "certutil_download"
+class = "structural"
+weight = 1.0
+description = "certutil used as a downloader (-urlcache / -verifyctl). Hashing (-hashfile) does not match."
+when = [[ '''\bcertutil(?:\.exe)?\b''', '''\s[-/](?:urlcache|verifyctl)\b''' ]]
+
+[[rule]]
+id = "certutil_decode_exec"
+class = "structural"
+weight = 0.7
+description = "certutil -decode producing an executable/script in a staging path or chained to further commands."
+when = [[
+  '''\bcertutil(?:\.exe)?\s+[-/]decode\b''',
+  '''\.(?:exe|dll|ps1|vbs|bat|cmd|hta|js|scr)\b''',
+  '''(?:%te?mp%|\$env:te?mp|\\temp\\|%appdata%|&&|;|\s&\s)''',
+]]
+
+[[rule]]
+id = "msiexec_remote"
+class = "structural"
+weight = 1.0
+description = "msiexec installing straight from an http(s) URL or a WebDAV host."
+when = [[ '''\bmsiexec(?:\.exe)?\b[^\n]*?/(?:i|package)\s*["']?(?:https?://|\\\\[^\\\s]+@)''' ]]
+
+[[rule]]
+id = "remote_script_host"
+class = "structural"
+weight = 1.0
+description = "wscript/cscript running a script from a URL or UNC path."
+when = [[ '''\b(?:wscript|cscript)(?:\.exe)?\b(?:\s+//\S+)*\s+["']?(?:https?://|\\\\)''' ]]
+
+[[rule]]
+id = "finger_pipe"
+class = "structural"
+weight = 1.2
+description = "finger.exe used as a downloader piped into a shell (KongTuke-style, 2025)."
+when = [[ '''\bfinger(?:\.exe)?\s+\S+@\S+[^\n]*\|\s*(?:cmd|powershell|pwsh|sh|bash)\b''' ]]
+
+[[rule]]
+id = "webdav_exec"
+class = "structural"
+weight = 0.9
+description = "Executing from a WebDAV share (\\\\host@SSL\\DavWWWRoot, pushd \\\\host then run)."
+when = [
+  [ '''\\\\[^\s\\]+@(?:ssl|\d+)(?:@\d+)?\\davwwwroot\\''' ],
+  [ '''\bpushd\s+["']?\\\\[^\s\\]+''', '''(?:&&|\s&\s|;)\s*(?:start|call|\S+\.(?:bat|cmd|exe|vbs|js))''' ],
+  [ '''\bnet\s+use\b[^\n]*\\\\[^\s\\]*@''' ],
+]
+
+[[rule]]
+id = "conhost_headless"
+class = "structural"
+weight = 0.6
+description = "conhost --headless used to launch a hidden child (seen in 2025 Run-dialog lures)."
+when = [[ '''\bconhost(?:\.exe)?\s+--headless\b''' ]]
+
+# ───────────────────────────── BEHAVIORAL ─────────────────────────────
+
+[[rule]]
+id = "fetch_and_execute"
+class = "behavioral"
+weight = 0.8
+description = "Fetch-and-execute in one expression: iex(iwr), curl | bash, bash -c \"$(curl)\", | python3 -, piping into cmd/powershell."
+when = [
+  [ '''\b(?:iex|invoke-expression)\b.*?\b(?:iwr|irm|invoke-webrequest|invoke-restmethod|downloadstring|downloaddata|net\.webclient|start-bitstransfer|curl|wget)\b''' ],
+  [ '''\b(?:iwr|irm|invoke-webrequest|invoke-restmethod|downloadstring)\b.*?\|\s*(?:iex|invoke-expression)\b''' ],
+  [ '''\b(?:curl|wget|fetch)\b[^|\n]*\|\s*(?:sudo\s+(?:-\S+\s+)*)?(?:env\s+(?:\S+=\S+\s+)*)?(?:/(?:usr/)?bin/)?(?:ba|z|da|k|c|tc|fi)?sh\b''' ],
+  [ '''\b(?:curl|wget)\b[^|\n]*\|\s*(?:sudo\s+(?:-\S+\s+)*)?(?:/(?:usr/)?bin/)?(?:python[0-9.]*|perl|ruby|node|php|osascript)\b(?:\s+-)?\s*(?:$|[;&)"'])''' ],
+  [ '''\b(?:ba|z|da|k)?sh\b.{0,40}?-c\s*["']?\s*\$\(\s*(?:curl|wget)\b''' ],
+  [ '''\b(?:ba|z|da|k)?sh\b.{0,40}?-c\s*["']?\s*`\s*(?:curl|wget)\b''' ],
+  [ '''\b(?:eval|source)\s+["']?\$\(\s*(?:curl|wget)\b''' ],
+  [ '''\b(?:source|\.)\s+<\(\s*(?:curl|wget)\b''' ],
+  [ '''\|\s*(?:cmd|powershell|pwsh)(?:\.exe)?\b(?:\s+-)?\s*(?:$|[;&)"'])''' ],
+  [ '''\bosascript\b.*?do\s+shell\s+script''' ],
+]
+
+[[rule]]
+id = "decode_and_execute"
+class = "behavioral"
+weight = 0.8
+description = "Decoded content handed straight to an interpreter: base64 -d | bash, iex(FromBase64String), iex(-join [char])."
+when = [
+  [ '''\bbase64\s+(?:-d|--decode|-D|-di)\b[^\n]*\|\s*(?:sudo\s+)?(?:/(?:usr/)?bin/)?(?:ba|z|da)?sh\b''' ],
+  [ '''\bbase64\s+(?:-d|--decode|-D)\b[^\n]*\|\s*(?:python[0-9.]*|perl|ruby|node|osascript)\b''' ],
+  [ '''\b(?:iex|invoke-expression)\b.*?(?:frombase64string|\[(?:system\.)?text\.encoding\]|gzipstream|deflatestream|-join\b|\[char|unescapedatastring)''' ],
+  [ '''(?:frombase64string|\[char\]|-join\b|unescapedatastring).*?\|\s*(?:iex|invoke-expression)\b''' ],
+  [ '''\b(?:ba|z)?sh\b\s+-c\s+["']?\$\(\s*(?:printf|echo)\b[^)]*\\x''' ],
+  [ '''\beval\b[^\n]*?\b(?:atob|base64|decode)''' ],
+]
+
+[[rule]]
+id = "hidden_window"
+class = "behavioral"
+weight = 0.4
+description = "Hidden execution: powershell -w hidden/-w 1, start /min, nohup ... >/dev/null 2>&1 &."
+when = [
+  [ '''\b(?:powershell|pwsh)\b''', '''\s-w(?:i|in|ind|indo|indow|indows|indowst|indowsty|indowstyl|indowstyle)?\s+["']?(?:h|hi|hid|hidd|hidde|hidden|1|min|minimized|2)\b''' ],
+  [ '''\bnohup\b.*?>\s*/dev/null\s+2>&1\s*&''' ],
+  [ '''\bstart\s+(?:""\s+)?/min\b''' ],
+  [ '''>\s*/dev/null\s+2>&1\s*&\s*(?:disown\s*)?$''' ],
+]
+
+[[rule]]
+id = "encoding_marker"
+class = "behavioral"
+weight = 0.4
+description = "Literal obfuscation markers: -EncodedCommand, FromBase64String, base64 -d, [char] codes, \\x escapes, reversal idioms. Detecting obfuscation is free; resolving it is the decoder's job."
+when = [
+  [ '''(?:powershell|pwsh)(?:\.exe)?\b.*?\s[-/]e(?:c|n|nc|nco|ncod|ncode|ncoded|ncodedc|ncodedcommand)?\s+["']?[a-z0-9+/]{20,}''' ],
+  [ '''frombase64string''' ],
+  [ '''\bbase64\s+(?:-d|--decode|-D)\b''' ],
+  [ '''\bcertutil(?:\.exe)?\s+[-/]decode''' ],
+  [ '''\[char\]\s*\(?\d{2,3}''' ],
+  [ '''\[char\[\]\]''' ],
+  [ '''\bchrw?\(\s*\d{2,3}\s*\)''' ],
+  [ '''fromcharcode''' ],
+  [ '''\batob\(''' ],
+  [ '''gzipstream|deflatestream''' ],
+  [ '''\\x[0-9a-f]{2}\\x[0-9a-f]{2}''' ],
+  [ '''\[uri\]::unescapedatastring|httputility\]::urldecode''' ],
+  [ '''\[-1\s*\.\.\s*-''' ],
+  [ '''\[array\]::reverse''' ],
+  [ '''\|\s*rev\b''' ],
+]
+
+[[rule]]
+id = "staging_path_write"
+class = "behavioral"
+weight = 0.4
+description = "Writing into a staging path (%TEMP%, %APPDATA%, /tmp, /var/tmp, ~/.cache). Only meaningful with fetch/execute."
+when = [[
+  '''(?:%te?mp%|\$env:te?mp\b|\$env:(?:local)?appdata\b|%(?:local)?appdata%|\\appdata\\local\\temp\\|%public%|\$env:public\b|c:\\users\\public\\|c:\\programdata\\|(?:^|[\s"'=>:])/(?:var/)?tmp/|~/\.cache/|\$tmpdir\b|\$home/\.cache/|~/library/application support/)''',
+  '''(?:\s-o\s|\s-O\s|--output\b|-outfile\b|downloadfile|>\s*["']?\S|\bcp\b|\bmv\b|\bcopy\b|-destinationpath\b|\bchmod\b|\bset\s*/p\b|\btee\b|\bexpand-archive\b|\bunzip\b)''',
+]]
+unless = [ '''\bmktemp\b''' ]
+
+[[rule]]
+id = "persistence_write"
+class = "behavioral"
+weight = 0.7
+description = "Run key, Startup folder, scheduled task, LaunchAgent, crontab, shell rc or systemd user unit write."
+when = [
+  [ '''\breg(?:\.exe)?\s+add\b''', '''\\currentversion\\run(?:once)?\b''' ],
+  [ '''(?:new-itemproperty|set-itemproperty)''', '''\\currentversion\\run(?:once)?\b''' ],
+  [ '''\\start menu\\programs\\startup\\|shell:startup''', '''(?:\bcopy\b|\bmove\b|\bcp\b|\bmv\b|new-item|copy-item|move-item|set-content|out-file|>)''' ],
+  [ '''launchagents|launchdaemons''', '''(?:\bcp\b|\bmv\b|\btee\b|>|\bcat\b|\bdefaults\s+write|\blaunchctl\b|\bplutil\b)''' ],
+  [ '''\blaunchctl\s+(?:load|bootstrap|submit)\b''' ],
+  [ '''\bschtasks(?:\.exe)?\s+/create\b''' ],
+  [ '''\bregister-scheduledtask\b''' ],
+  [ '''\bcrontab\b''', '''(?:\(\s*crontab\s+-l|\|\s*crontab\s+-\s*(?:$|[;&)])|echo[^|]*\|\s*crontab)''' ],
+  [ '''>>\s*["']?(?:~|\$home)/\.(?:bashrc|zshrc|bash_profile|zprofile|profile)\b''' ],
+  [ '''systemctl\s+--user\s+(?:enable|daemon-reload)''', '''\.config/systemd/user''' ],
+]
+
+[[rule]]
+id = "lolbin_chain"
+class = "behavioral"
+weight = 0.5
+description = "Download -> extract -> run chained in one paste (curl -> Expand-Archive -> wscript, Lazarus ClickFake)."
+when = [[ '''\b(?:curl|wget|iwr|invoke-webrequest|certutil|bitsadmin|start-bitstransfer)\b.*?(?:&&|;|\|\|).*?\b(?:expand-archive|tar\s+-?x|unzip|expand(?:\.exe)?\s|7z\s+x)\b.*?(?:&&|;).*?(?:\b(?:wscript|cscript|mshta|rundll32|regsvr32|start|bash|sh|python[0-9.]*|node)\b|\S+\.(?:exe|vbs|js|bat|cmd|ps1|sh)\b)''' ]]
+
+[[rule]]
+id = "download_then_execute"
+class = "behavioral"
+weight = 0.6
+description = "Download to a file then execute it in the same paste (curl -o x && bash x, -OutFile then Start-Process)."
+when = [
+  [ '''\b(?:curl|wget)\b[^\n]*?\s(?:-o|--output|-O)\s*["']?\S+''', '''(?:&&|;|\|\|)\s*(?:sudo\s+)?(?:chmod\s+\+?[0-7]*x|bash\b|sh\b|zsh\b|python[0-9.]*\b|nohup\b|open\b|\./|/tmp/|/var/tmp/|\S+\.(?:exe|vbs|bat|cmd|ps1|msi|sh)\b|start\b|wscript\b|cscript\b|rundll32\b|msiexec\b|launchctl\b)''' ],
+  [ '''(?:-outfile\b|downloadfile|start-bitstransfer|certutil[^\n]*-urlcache|bitsadmin[^\n]*/transfer)''', '''(?:&&|;|\s&\s)\s*.*?(?:start-process|\bstart\b|&\s*["'$]|\.\s+["'$]|\bwscript\b|\bcscript\b|\brundll32\b|\bmsiexec\b|\bmshta\b|\binvoke-item\b|\bii\b|\blaunchctl\b|\S+\.(?:exe|vbs|bat|cmd|ps1|msi|hta)\b)''' ],
+]
+
+[[rule]]
+id = "execution_policy_bypass"
+class = "behavioral"
+weight = 0.2
+description = "ExecutionPolicy Bypass/Unrestricted. Weak alone (Chocolatey, SCCM use it), contributes in combination."
+when = [
+  [ '''\s-(?:ep|exec|executionpolicy)\s+(?:bypass|unrestricted)\b''' ],
+  [ '''set-executionpolicy\s+(?:-executionpolicy\s+)?(?:bypass|unrestricted)\b''' ],
+]

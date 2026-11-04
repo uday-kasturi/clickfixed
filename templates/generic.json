@@ -1,0 +1,8 @@
+{
+  "source": "clickfixed",
+  "title": "{{fmt.title}}",
+  "severity": "{{clickfixed.severity.name}}",
+  "score": "{{clickfixed.score}}",
+  "dedupe_key": "{{clickfixed.dedupe_key}}",
+  "alert": "{{alert}}"
+}
