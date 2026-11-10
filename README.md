@@ -161,9 +161,21 @@ docs/                threat model, evaluation, results, alerting
 
 ## Platform scope
 
-clickfixed is built and tested on Linux. The engine is OS-independent, but most ClickFix victims are on Windows and macOS, and this build doesn't protect them yet. Windows and macOS collectors are designed but not built. [`docs/THREAT_MODEL.md`](docs/THREAT_MODEL.md) covers what is and isn't in scope.
+clickfixed is built and tested on Linux. The engine is OS-independent, but most ClickFix victims are on Windows and macOS, and this build doesn't protect them yet. Windows and macOS collectors are designed but not built yet (see [Upcoming](#upcoming)). [`docs/THREAT_MODEL.md`](docs/THREAT_MODEL.md) covers what is and isn't in scope.
 
 On Wayland, copies from native Wayland apps reach clickfixed through the compositor's clipboard bridge, so their browser origin is lost. The content is still scored.
+
+## Upcoming
+
+**Windows.** Most ClickFix victims paste into Win+R, so this comes first. The engine already scores Windows lures, so the work is the collectors and the daemon:
+
+- clipboard listener that records which process wrote the clipboard, so browser origin carries over
+- Run dialog and Win+X detection from the foreground window and RunMRU writes
+- process creation events from ETW, or Sysmon Event ID 1 where Sysmon is installed
+- toast notifications, block mode, and a Windows service
+- a `windows-latest` CI job
+
+**macOS** follows, with pasteboard polling and `eslogger` for process events.
 
 ## License
 
