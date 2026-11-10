@@ -1,13 +1,17 @@
-//! clickfixed: Linux reference daemon.
+//! clickfixed daemon (Linux and Windows).
 //!
 //! Three independent signals, each on its own thread. None waits on another:
 //!   Signal 1 (paste-time): clipboard write -> origin -> fast path -> warn / block.
+//!                          On Windows, also re-scored when the Run dialog or a terminal
+//!                          comes to the front, before the user can paste.
 //!   Signal 2 (execution):  exec event -> correlate against clipboard hashes -> alert
 //!                          immediately; also scores typed commands on heuristics alone.
 //!   Signal 3 (post-hoc):   deep decode + IOC report, fed by a bounded queue that
 //!                          Signal 1 never blocks on.
 //!
-//! Privacy: clipboard text lives only in memory for the duration of scoring. Logs carry
+//! Privacy: clipboard text lives only in memory: for the duration of scoring, and on
+//! Windows as the single current clipboard while it could still be pasted somewhere
+//! that raises its score. Logs carry
 //! a hash prefix, verdict and feature ids, never content. Password-manager sources are
 //! skipped before scoring and never logged.
 
@@ -15,9 +19,10 @@ mod config;
 mod correlate;
 
 use cfx_alert::{Action, Alert, AlertContext, AlertInput, Env, ProcessInfo, Sink, Suppressed};
+#[cfg(target_os = "linux")]
 use cfx_collect::linux::{ExecBackend, LinuxCollector};
-use cfx_collect::{ClipboardControl, Collector, ExecEvent};
-use cfx_engine::{DomainClass, Engine, Level, Observation, Origin, Target, Verdict};
+use cfx_collect::{notify, ClipboardControl, Collector, ExecEvent, PasteTarget, PasteTargetKind};
+use cfx_engine::{DecodeTrace, DomainClass, Engine, Level, Observation, Origin, Target, Verdict};
 use clap::{Parser, Subcommand};
 use config::{Config, ExecSource, Mode};
 use correlate::{exec_text, Entry, HashBuffer};
@@ -28,11 +33,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 #[derive(Parser)]
-#[command(
-    name = "clickfixed",
-    version,
-    about = "ClickFix paste-time detector (Linux reference daemon)"
-)]
+#[command(name = "clickfixed", version, about = "ClickFix paste-time detector")]
 struct Cli {
     #[command(subcommand)]
     cmd: Cmd,
@@ -56,6 +57,19 @@ enum Cmd {
         /// DEV ONLY: load secrets from this .env file. Real environment variables win.
         #[arg(long)]
         dotenv: Option<PathBuf>,
+        /// Append logs to this file instead of stderr.
+        #[arg(long)]
+        log_file: Option<PathBuf>,
+        /// Windows: detach from the console window and log to the state directory
+        /// (`clickfixed.log`). Used by `clickfixed autostart enable`.
+        #[arg(long)]
+        background: bool,
+    },
+    /// Windows: start clickfixed at login (per user, no administrator rights needed).
+    #[cfg(windows)]
+    Autostart {
+        #[command(subcommand)]
+        cmd: AutostartCmd,
     },
     /// Alerting: validate config and secrets, send a test alert, generate Wazuh rules.
     Alerts {
@@ -71,6 +85,21 @@ enum Cmd {
         #[arg(long)]
         url: Option<String>,
     },
+}
+
+#[cfg(windows)]
+#[derive(Subcommand)]
+enum AutostartCmd {
+    /// Run `clickfixed run --background` at every login.
+    Enable {
+        /// Config file to use. Default: %APPDATA%\clickfixed\config.toml
+        #[arg(long)]
+        config: Option<PathBuf>,
+    },
+    /// Stop starting at login.
+    Disable,
+    /// Show the registered command, if any.
+    Status,
 }
 
 #[derive(Subcommand)]
@@ -146,7 +175,7 @@ fn alerts_cmd(cmd: AlertsCmd) {
             sink.shutdown();
         }
         AlertsCmd::Test { config, dotenv } => {
-            init_logging(false);
+            init_logging(false, None);
             let cfg = Config::load(config.as_deref()).unwrap_or_else(|e| die(&e));
             let (sink, ctx) = start_sink(&cfg, &load_env(dotenv.as_deref()));
             if sink.output_names().is_empty() {
@@ -204,6 +233,8 @@ fn main() {
     let cli = Cli::parse();
     match cli.cmd {
         Cmd::Alerts { cmd } => alerts_cmd(cmd),
+        #[cfg(windows)]
+        Cmd::Autostart { cmd } => autostart_cmd(cmd),
         Cmd::Check { text, config, url } => {
             let cfg = Config::load(config.as_deref()).unwrap_or_else(|e| die(&e));
             let origin = match url {
@@ -223,8 +254,17 @@ fn main() {
             exec,
             json,
             dotenv,
+            log_file,
+            background,
         } => {
-            init_logging(json);
+            let log_file = if background {
+                #[cfg(windows)]
+                cfx_collect::windows::detach_console();
+                Some(log_file.unwrap_or_else(|| cfx_alert::state_dir().join("clickfixed.log")))
+            } else {
+                log_file
+            };
+            init_logging(json, log_file.as_deref());
             let mut cfg = Config::load(config.as_deref()).unwrap_or_else(|e| die(&e));
             match mode.as_deref() {
                 Some("warn") => cfg.mode = Mode::Warn,
@@ -234,6 +274,7 @@ fn main() {
             }
             match exec.as_deref() {
                 Some("proc") => cfg.exec_source = ExecSource::Proc,
+                Some("audit") if cfg!(windows) => die("--exec audit is Linux-only"),
                 Some("audit") => cfg.exec_source = ExecSource::Audit,
                 Some(e) => die(&format!("unknown exec source {e}")),
                 None => {}
@@ -249,16 +290,93 @@ fn die(msg: &str) -> ! {
     std::process::exit(2)
 }
 
-fn init_logging(json: bool) {
+fn init_logging(json: bool, file: Option<&std::path::Path>) {
     let filter =
         tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into());
-    let b = tracing_subscriber::fmt()
-        .with_env_filter(filter)
-        .with_writer(std::io::stderr);
-    if json {
-        b.json().init();
-    } else {
-        b.init();
+    let b = tracing_subscriber::fmt().with_env_filter(filter);
+    let file = file.map(|p| {
+        if let Some(dir) = p.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(p)
+            .unwrap_or_else(|e| die(&format!("{}: {e}", p.display())))
+    });
+    match (file, json) {
+        (Some(f), true) => b.with_ansi(false).with_writer(Mutex::new(f)).json().init(),
+        (Some(f), false) => b.with_ansi(false).with_writer(Mutex::new(f)).init(),
+        (None, true) => b.with_writer(std::io::stderr).json().init(),
+        (None, false) => b.with_writer(std::io::stderr).init(),
+    }
+}
+
+#[cfg(windows)]
+fn autostart_cmd(cmd: AutostartCmd) {
+    use cfx_collect::windows::autostart;
+    match cmd {
+        AutostartCmd::Enable { config } => {
+            let config = config.unwrap_or_else(|| cfx_alert::config_dir().join("config.toml"));
+            if !config.is_file() {
+                die(&format!(
+                    "{} not found. Copy clickfixed.example.toml there first, or pass --config.",
+                    config.display()
+                ));
+            }
+            let config = std::fs::canonicalize(&config).unwrap_or(config);
+            let exe = std::env::current_exe().unwrap_or_else(|e| die(&e.to_string()));
+            let command = format!(
+                "\"{}\" run --background --config \"{}\"",
+                exe.display(),
+                config.display()
+            );
+            autostart::enable(&command).unwrap_or_else(|e| die(&e));
+            println!("clickfixed will start at login:\n  {command}");
+        }
+        AutostartCmd::Disable => {
+            autostart::disable().unwrap_or_else(|e| die(&e));
+            println!("clickfixed will no longer start at login.");
+        }
+        AutostartCmd::Status => match autostart::status() {
+            Some(c) => println!("enabled: {c}"),
+            None => println!("disabled"),
+        },
+    }
+}
+
+/// The current clipboard, kept in memory only while a paste target could still raise its
+/// score. Replaced by the next copy; never written anywhere.
+#[derive(Clone)]
+struct LatestClip {
+    text: String,
+    hash: String,
+    origin: Origin,
+    app: String,
+    at: Instant,
+}
+
+/// The platform's collectors.
+trait Platform: Collector + ClipboardControl + Send + Sync {}
+impl<T: Collector + ClipboardControl + Send + Sync> Platform for T {}
+
+fn platform_collector(cfg: &Config) -> Arc<dyn Platform> {
+    #[cfg(target_os = "linux")]
+    {
+        Arc::new(LinuxCollector {
+            exec_backend: match cfg.exec_source {
+                ExecSource::Proc => ExecBackend::Proc { interval_ms: 50 },
+                ExecSource::Audit => ExecBackend::Audit {
+                    log: cfg.audit_log.clone(),
+                },
+            },
+            ..LinuxCollector::default()
+        })
+    }
+    #[cfg(windows)]
+    {
+        let _ = cfg;
+        Arc::new(cfx_collect::windows::WindowsCollector::default())
     }
 }
 
@@ -272,15 +390,8 @@ fn run(cfg: Config, env: Env) {
     let buffer = Arc::new(Mutex::new(HashBuffer::new(Duration::from_secs(
         cfg.hash_buffer_ttl_secs,
     ))));
-    let collector = Arc::new(LinuxCollector {
-        exec_backend: match cfg.exec_source {
-            ExecSource::Proc => ExecBackend::Proc { interval_ms: 50 },
-            ExecSource::Audit => ExecBackend::Audit {
-                log: cfg.audit_log.clone(),
-            },
-        },
-        ..LinuxCollector::default()
-    });
+    let collector = platform_collector(&cfg);
+    let latest: Arc<Mutex<Option<LatestClip>>> = Arc::new(Mutex::new(None));
     tracing::info!(mode = ?cfg.mode, exec = ?cfg.exec_source, reports = %cfg.reports_dir.display(), "clickfixed starting");
     tracing::info!(outputs = ?sink.output_names(), host = %actx.host, user = %actx.user, "alerting ready");
 
@@ -295,13 +406,14 @@ fn run(cfg: Config, env: Env) {
             .unwrap()
     };
     let s1 = {
-        let (engine, cfg, buffer, collector, sink, actx) = (
+        let (engine, cfg, buffer, collector, sink, actx, latest) = (
             engine.clone(),
             cfg.clone(),
             buffer.clone(),
             collector.clone(),
             sink.clone(),
             actx.clone(),
+            latest.clone(),
         );
         let rx = collector.clipboard_events();
         std::thread::Builder::new()
@@ -311,7 +423,15 @@ fn run(cfg: Config, env: Env) {
                     sink: &sink,
                     ctx: &actx,
                 };
-                signal1(rx, &engine, &cfg, &buffer, collector.as_ref(), s3_tx, out)
+                let shared = Shared {
+                    engine: &engine,
+                    cfg: &cfg,
+                    buffer: &buffer,
+                    latest: &latest,
+                    control: collector.as_ref(),
+                    out,
+                };
+                signal1(rx, shared, s3_tx)
             })
             .unwrap()
     };
@@ -335,7 +455,37 @@ fn run(cfg: Config, env: Env) {
             })
             .unwrap()
     };
-    for h in [s1, s2, s3] {
+    // Paste targets (Windows). Returns at once where the platform has none.
+    let targets = {
+        let (engine, cfg, buffer, collector, sink, actx) = (
+            engine.clone(),
+            cfg.clone(),
+            buffer.clone(),
+            collector.clone(),
+            sink.clone(),
+            actx.clone(),
+        );
+        let rx = collector.paste_targets();
+        std::thread::Builder::new()
+            .name("paste-target".into())
+            .spawn(move || {
+                let out = Alerting {
+                    sink: &sink,
+                    ctx: &actx,
+                };
+                let shared = Shared {
+                    engine: &engine,
+                    cfg: &cfg,
+                    buffer: &buffer,
+                    latest: &latest,
+                    control: collector.as_ref(),
+                    out,
+                };
+                paste_target(rx, shared)
+            })
+            .unwrap()
+    };
+    for h in [s1, s2, s3, targets] {
         let _ = h.join();
     }
 }
@@ -365,7 +515,7 @@ fn exec_process(ev: &ExecEvent) -> ProcessInfo {
         .exe
         .as_deref()
         .or(ev.argv.first().map(String::as_str))
-        .and_then(|p| p.rsplit('/').next())
+        .and_then(|p| p.rsplit(['/', '\\']).next())
         .map(String::from);
     ProcessInfo {
         pid: ev.pid,
@@ -383,19 +533,89 @@ fn feature_ids(v: &Verdict) -> Vec<&str> {
         .collect()
 }
 
-fn signal1(
-    rx: Receiver<cfx_collect::ClipboardEvent>,
-    engine: &Engine,
-    cfg: &Config,
-    buffer: &Mutex<HashBuffer>,
-    control: &dyn ClipboardControl,
-    s3: SyncSender<Observation>,
-    out: Alerting<'_>,
-) {
+/// State the paste-time signals share.
+#[derive(Clone, Copy)]
+struct Shared<'a> {
+    engine: &'a Engine,
+    cfg: &'a Config,
+    buffer: &'a Mutex<HashBuffer>,
+    latest: &'a Mutex<Option<LatestClip>>,
+    control: &'a dyn ClipboardControl,
+    out: Alerting<'a>,
+}
+
+/// Warn or block on a flagged clipboard command: block-mode replacement, notification
+/// and alert. `place` names where the user is about to paste, when known.
+fn flag(
+    sh: Shared<'_>,
+    v: &Verdict,
+    trace: &DecodeTrace,
+    obs: &Observation,
+    hash: &str,
+    app: &str,
+    place: Option<&str>,
+) -> Option<Arc<Alert>> {
+    let blocked = v.level == Level::Block
+        && sh.cfg.mode == Mode::Block
+        && {
+            let msg = format!(
+            "# clickfixed blocked a suspicious clipboard command (sha256 {}). Do not run commands a web page asks you to paste.",
+            &hash[..12]
+        );
+            match sh.control.replace_clipboard(msg) {
+                Ok(()) => true,
+                Err(e) => {
+                    tracing::error!(error = %e, "clipboard replace failed");
+                    false
+                }
+            }
+        };
+    if sh.cfg.notify {
+        let title = if blocked {
+            "Clipboard command blocked"
+        } else {
+            "Suspicious clipboard command"
+        };
+        notify(
+            title,
+            &format!(
+                "This looks like a ClickFix lure ({}). Don't paste it into {}. Signals: {}",
+                v.level.as_str(),
+                place.unwrap_or("a terminal or Run box"),
+                feature_ids(v).join(", ")
+            ),
+            v.level >= Level::Block,
+        );
+    }
+    let alert = sh.out.build(AlertInput {
+        action: Action::ClipboardCommandFlagged,
+        verdict: v,
+        layers: &trace.layers,
+        origin: &obs.origin,
+        target: &obs.target,
+        source_app: (!app.is_empty()).then_some(app),
+        process: None,
+        blocked,
+    });
+    if let Some(a) = &alert {
+        sh.out.emit(a);
+    }
+    alert
+}
+
+fn signal1(rx: Receiver<cfx_collect::ClipboardEvent>, sh: Shared<'_>, s3: SyncSender<Observation>) {
+    let Shared {
+        engine,
+        cfg,
+        buffer,
+        latest,
+        ..
+    } = sh;
     let mut suppressed: u64 = 0;
     for ev in rx {
         let app = ev.source.name.clone().unwrap_or_default();
         if cfg.is_password_manager(&app) {
+            *latest.lock().unwrap() = None;
             suppressed += 1;
             tracing::debug!(suppressed, "password manager source suppressed");
             continue;
@@ -426,7 +646,8 @@ fn signal1(
             (_, Some(first)) => first,
             _ => fresh,
         };
-        // Linux cannot see the paste target at copy time; Signal 2 re-scores with the shell.
+        // The paste target is unknown at copy time. Windows re-scores when one comes to the
+        // front (paste_target); Signal 2 re-scores with the shell that runs it.
         let obs = Observation::new(ev.text)
             .origin(origin.clone())
             .target(Target::Unknown)
@@ -447,53 +668,20 @@ fn signal1(
         // Re-writes of content we already judged (gnome-shell clipboard persistence,
         // clipboard managers) do not re-alert.
         let repeat = known.is_some_and(|k| k >= v.level);
-        let mut alert = None;
-        if v.level >= Level::Warn && !repeat {
-            let blocked = v.level == Level::Block
-                && cfg.mode == Mode::Block
-                && {
-                    let msg = format!(
-                    "# clickfixed blocked a suspicious clipboard command (sha256 {}). Do not run commands a web page asks you to paste.",
-                    &hash[..12]
-                );
-                    match control.replace_clipboard(msg) {
-                        Ok(()) => true,
-                        Err(e) => {
-                            tracing::error!(error = %e, "clipboard replace failed");
-                            false
-                        }
-                    }
-                };
-            if cfg.notify {
-                let title = if blocked {
-                    "Clipboard command blocked"
-                } else {
-                    "Suspicious clipboard command"
-                };
-                notify(
-                    title,
-                    &format!(
-                        "This looks like a ClickFix lure ({}). Don't paste it into a terminal or Run box. Signals: {}",
-                        v.level.as_str(),
-                        feature_ids(&v).join(", ")
-                    ),
-                    v.level >= Level::Block,
-                );
-            }
-            alert = out.build(AlertInput {
-                action: Action::ClipboardCommandFlagged,
-                verdict: &v,
-                layers: &trace.layers,
-                origin: &obs.origin,
-                target: &obs.target,
-                source_app: (!app.is_empty()).then_some(app.as_str()),
-                process: None,
-                blocked,
-            });
-            if let Some(a) = &alert {
-                out.emit(a);
-            }
-        }
+        let alert = if v.level >= Level::Warn && !repeat {
+            flag(sh, &v, &trace, &obs, &hash, &app, None)
+        } else {
+            None
+        };
+        // Context only multiplies a score, so content that scored zero can never warn
+        // wherever it is pasted: it is not kept.
+        *latest.lock().unwrap() = (v.score > 0.0).then(|| LatestClip {
+            text: obs.text.clone(),
+            hash: hash.clone(),
+            origin: origin.clone(),
+            app: app.clone(),
+            at: Instant::now(),
+        });
         buffer.lock().unwrap().record(
             &obs.text,
             Entry {
@@ -578,8 +766,12 @@ fn signal2(
             .unwrap_or(Origin::Unknown);
         let obs = Observation::new(text)
             .origin(origin)
-            .target(Target::Terminal {
-                shell: parent.clone(),
+            .target(if parent == "run_dialog" {
+                Target::RunDialog
+            } else {
+                Target::Terminal {
+                    shell: parent.clone(),
+                }
             })
             .role(cfg.role);
         let (v, trace) = engine.fast_path_traced(&obs);
@@ -654,33 +846,71 @@ fn signal3(rx: Receiver<Observation>, engine: &Engine, cfg: &Config) {
 
 fn write_private(path: &std::path::Path, body: &[u8]) -> std::io::Result<()> {
     use std::io::Write;
-    use std::os::unix::fs::OpenOptionsExt;
-    let mut f = std::fs::OpenOptions::new()
-        .write(true)
-        .create(true)
-        .truncate(true)
-        .mode(0o600)
-        .open(path)?;
-    f.write_all(body)
+    let mut opts = std::fs::OpenOptions::new();
+    opts.write(true).create(true).truncate(true);
+    // Windows: the default reports dir under %LOCALAPPDATA% is already private to the user.
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::mode(&mut opts, 0o600);
+    opts.open(path)?.write_all(body)
 }
 
-/// Fire-and-forget desktop notification. Never blocks a signal thread.
-///
-/// `urgent` is for Block verdicts and flagged pastes that actually ran. Those use critical
-/// urgency, which GNOME keeps on screen until dismissed. Everything else is normal and
-/// transient: it shows once and does not persist or re-present from the tray.
-fn notify(title: &str, body: &str, urgent: bool) {
-    let mut cmd = std::process::Command::new("notify-send");
-    cmd.args(["-a", "clickfixed", "-i", "dialog-warning"]);
-    if urgent {
-        cmd.args(["-u", "critical"]);
-    } else {
-        cmd.args(["-u", "normal", "-e"]);
-    }
-    let child = cmd.args([title, body]).spawn();
-    if let Ok(mut c) = child {
-        std::thread::spawn(move || {
-            let _ = c.wait();
-        });
+/// Paste-target signal (Windows): when the Run dialog or a terminal comes to the front,
+/// re-score the current clipboard with that target, before the user can press Ctrl+V.
+/// Alerts only when the target raises the verdict above what the copy already got.
+fn paste_target(rx: Receiver<PasteTarget>, sh: Shared<'_>) {
+    let mut done: HashSet<(String, &'static str)> = HashSet::new();
+    for t in rx {
+        let Some(clip) = sh.latest.lock().unwrap().clone() else {
+            continue;
+        };
+        if clip.at.elapsed() > Duration::from_secs(sh.cfg.hash_buffer_ttl_secs) {
+            continue;
+        }
+        let (target, place) = match &t.kind {
+            PasteTargetKind::RunDialog => (Target::RunDialog, "the Run dialog"),
+            PasteTargetKind::Terminal { shell } => (
+                Target::Terminal {
+                    shell: shell.clone(),
+                },
+                "this terminal",
+            ),
+        };
+        if done.len() > 10_000 {
+            done.clear();
+        }
+        if !done.insert((clip.hash.clone(), target.as_str())) {
+            continue;
+        }
+        let obs = Observation::new(clip.text)
+            .origin(clip.origin.clone())
+            .target(target)
+            .role(sh.cfg.role);
+        let (v, trace) = sh.engine.fast_path_traced(&obs);
+        tracing::info!(
+            signal = 1,
+            sha = &clip.hash[..16],
+            level = v.level.as_str(),
+            score = format!("{:.2}", v.score),
+            target = obs.target.as_str(),
+            app = t.app.as_deref().unwrap_or(""),
+            "paste target focused"
+        );
+        let known = sh.buffer.lock().unwrap().known_level(&clip.hash);
+        if v.level < Level::Warn || known.is_some_and(|k| k >= v.level) {
+            continue;
+        }
+        let alert = flag(sh, &v, &trace, &obs, &clip.hash, &clip.app, Some(place));
+        sh.buffer.lock().unwrap().record(
+            &obs.text,
+            Entry {
+                full_hash: clip.hash.clone(),
+                origin: clip.origin,
+                first_seen: Instant::now(),
+                level: v.level,
+                score: v.score,
+                features: feature_ids(&v).into_iter().map(String::from).collect(),
+                alert,
+            },
+        );
     }
 }

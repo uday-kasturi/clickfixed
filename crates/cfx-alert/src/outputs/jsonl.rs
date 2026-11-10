@@ -4,8 +4,24 @@ use super::Output;
 use crate::schema::Alert;
 use std::fs::{File, OpenOptions};
 use std::io::Write;
-use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
 use std::path::PathBuf;
+
+/// Identity of the file behind a path, to notice rotation: the inode on Unix, the
+/// creation time on Windows (a rotated log is a new file with a new creation time).
+fn file_id(m: &std::fs::Metadata) -> u64 {
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::MetadataExt::ino(m)
+    }
+    #[cfg(windows)]
+    {
+        std::os::windows::fs::MetadataExt::creation_time(m)
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        m.len()
+    }
+}
 
 pub struct Stdout;
 
@@ -39,20 +55,22 @@ impl JsonFile {
         if let Some(dir) = self.path.parent() {
             std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
         }
-        let f = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .mode(0o600)
+        let mut opts = OpenOptions::new();
+        opts.create(true).append(true);
+        // Windows: the default state dir (%LOCALAPPDATA%) is already private to the user.
+        #[cfg(unix)]
+        std::os::unix::fs::OpenOptionsExt::mode(&mut opts, 0o600);
+        let f = opts
             .open(&self.path)
             .map_err(|e| format!("{}: {e}", self.path.display()))?;
-        let ino = f.metadata().map(|m| m.ino()).unwrap_or(0);
+        let ino = f.metadata().map(|m| file_id(&m)).unwrap_or(0);
         self.file = Some((f, ino));
         Ok(())
     }
 
     fn rotated(&self) -> bool {
         match (&self.file, std::fs::metadata(&self.path)) {
-            (Some((_, ino)), Ok(m)) => m.ino() != *ino,
+            (Some((_, ino)), Ok(m)) => file_id(&m) != *ino,
             _ => true,
         }
     }

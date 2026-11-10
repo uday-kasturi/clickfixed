@@ -79,3 +79,20 @@ impl ClipboardControl for LinuxCollector {
         x11::own_clipboard(text).map_err(|e| e.to_string())
     }
 }
+
+/// Desktop notification through `notify-send`. Critical urgency stays on screen in GNOME
+/// until dismissed; normal is transient and does not re-present from the tray.
+pub fn notify(title: &str, body: &str, urgent: bool) {
+    let mut cmd = std::process::Command::new("notify-send");
+    cmd.args(["-a", "clickfixed", "-i", "dialog-warning"]);
+    if urgent {
+        cmd.args(["-u", "critical"]);
+    } else {
+        cmd.args(["-u", "normal", "-e"]);
+    }
+    if let Ok(mut c) = cmd.args([title, body]).spawn() {
+        std::thread::spawn(move || {
+            let _ = c.wait();
+        });
+    }
+}

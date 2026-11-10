@@ -1,0 +1,5 @@
+# LF everywhere, including Windows checkouts: tests compare generated files byte for byte.
+* text=auto eol=lf
+
+# Corpus rows are test data: some deliberately contain CRLF inside a field. Never convert.
+corpus/** -text

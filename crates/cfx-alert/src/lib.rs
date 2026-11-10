@@ -20,7 +20,7 @@ pub mod sink;
 pub mod template;
 pub mod wazuh;
 
-pub use config::{AlertsConfig, OutputsConfig};
+pub use config::{config_dir, state_dir, AlertsConfig, OutputsConfig};
 pub use schema::{Action, Alert, AlertContext, AlertInput, Platform, ProcessInfo, Suppressed};
 pub use secrets::Env;
 pub use severity::{Band, SeverityMap, VerdictName};

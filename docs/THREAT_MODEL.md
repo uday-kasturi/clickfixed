@@ -32,11 +32,11 @@ Allowlist entries may only depend on the "not the attacker" rows. The loader enf
 - **The deobfuscation boundary.** We resolve pure encodings and literal concatenation only. Anything that needs runtime state is not resolved: environment variables, `$var` indirection, PowerShell automatic variables, aliases, fetched second stages, format operators with a variable argument or a format spec. Literal format operators are resolved. Base32, plain hex and rot13 are decoded only when the decoding tool (`base32 -d`, `xxd -r`, a `tr` rot13 map, `ToInt32(.., 16)`) appears in the same text, so ordinary hex and base32 data is never rewritten. The encoding-marker signal still fires, because detecting obfuscation is free, but the decoded content is not seen. **This is deliberate.** The engine is not an interpreter.
 - **Deep nesting.** Past 2 decode layers or 5 ms, the fast path stops and flags `needs_deep_analysis`. Signal 3 goes to 5 layers / 500 ms. Past that, nothing more is resolved.
 - **Synthetic paste.** Clipboard managers that *type* text fire no paste hook. Signal 2 still sees the exec.
-- **Short-lived processes** with the `/proc` exec backend. Use auditd.
+- **Short-lived processes** with the `/proc` exec backend (use auditd) and the Windows process poller. On Windows, RunMRU still records commands run from Win+R.
 - **Wayland-native sources.** Origin is lost through the compositor bridge (see README).
 - **Large clipboard content.** X11 INCR transfers are skipped, and content over 256 KB is truncated.
 - **Allowlisted domains are an evasion surface.** A compromised vendor-docs or internal page would get its fetch-and-execute dampened. Dampening is per feature and partial, so hidden windows, persistence, encoding or decoy prose still score. Keep both domain lists short.
-- **Platforms.** No Windows or macOS collectors in v1. Windows needs a clipboard listener plus ETW process creation (AN0962). macOS needs pasteboard polling plus `eslogger` under Full Disk Access (AN0964); the Endpoint Security entitlement requires Apple sign-off that individuals rarely get, and that problem is not solved here.
+- **Platforms.** Linux and Windows have collectors. The Windows build runs unprivileged: a clipboard listener, a foreground-window hook for the Run dialog and terminals (AN0962), a process poller and RunMRU. ETW process creation would close the short-lived-process gap but needs administrator rights, so it is not used yet. macOS needs pasteboard polling plus `eslogger` under Full Disk Access (AN0964); the Endpoint Security entitlement requires Apple sign-off that individuals rarely get, and that problem is not solved here.
 
 ## Privacy
 

@@ -1,7 +1,8 @@
 name: ci
 on: [push, pull_request]
+
 jobs:
-  test:
+  linux:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -15,3 +16,18 @@ jobs:
       # The engine must build with no OS APIs at all.
       - run: cargo build -p cfx-engine --target wasm32-unknown-unknown
       - run: cargo run --release -p cfx-eval -- run --iters 20
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo test --workspace
+      - run: cargo build --release -p cfx-daemon
+      - uses: actions/upload-artifact@v4
+        with:
+          name: clickfixed-windows-x86_64
+          path: target/release/clickfixed.exe

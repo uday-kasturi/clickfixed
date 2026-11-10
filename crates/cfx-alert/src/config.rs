@@ -220,10 +220,18 @@ fn d_retries() -> u32 {
     2
 }
 fn d_transport() -> SyslogTransport {
-    SyslogTransport::Unix
+    if cfg!(unix) {
+        SyslogTransport::Unix
+    } else {
+        SyslogTransport::Udp
+    }
 }
 fn d_syslog_addr() -> String {
-    "/dev/log".into()
+    if cfg!(unix) {
+        "/dev/log".into()
+    } else {
+        "127.0.0.1:514".into()
+    }
 }
 fn d_facility() -> String {
     "local4".into()
@@ -250,11 +258,33 @@ fn d_on_dup() -> OnDuplicate {
     OnDuplicate::Comment
 }
 pub fn d_alert_log() -> PathBuf {
-    let base = std::env::var_os("XDG_STATE_HOME")
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/state")))
-        .unwrap_or_else(|| "/var/log".into());
-    base.join("clickfixed/alerts.json")
+    state_dir().join("alerts.json")
+}
+
+/// Per-user state directory: `%LOCALAPPDATA%\clickfixed` on Windows,
+/// `$XDG_STATE_HOME/clickfixed` (default `~/.local/state/clickfixed`) elsewhere.
+pub fn state_dir() -> PathBuf {
+    let base = if cfg!(windows) {
+        std::env::var_os("LOCALAPPDATA").map(PathBuf::from)
+    } else {
+        std::env::var_os("XDG_STATE_HOME")
+            .map(PathBuf::from)
+            .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/state")))
+    };
+    base.unwrap_or_else(std::env::temp_dir).join("clickfixed")
+}
+
+/// Per-user config directory: `%APPDATA%\clickfixed` on Windows,
+/// `$XDG_CONFIG_HOME/clickfixed` (default `~/.config/clickfixed`) elsewhere.
+pub fn config_dir() -> PathBuf {
+    let base = if cfg!(windows) {
+        std::env::var_os("APPDATA").map(PathBuf::from)
+    } else {
+        std::env::var_os("XDG_CONFIG_HOME")
+            .map(PathBuf::from)
+            .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))
+    };
+    base.unwrap_or_else(|| ".".into()).join("clickfixed")
 }
 
 pub fn facility_code(name: &str) -> Option<u8> {

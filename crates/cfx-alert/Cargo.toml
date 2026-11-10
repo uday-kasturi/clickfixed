@@ -18,7 +18,14 @@ regex = "1"
 base64 = "0.22"
 gethostname = "1"
 time = { version = "0.3", features = ["formatting", "macros"] }
+
+# HTTP outputs. rustls on Unix; on Windows the system TLS stack (SChannel) and the Windows
+# certificate store, so corporate TLS inspection roots are honoured.
+[target.'cfg(not(windows))'.dependencies]
 ureq = "3"
+
+[target.'cfg(windows)'.dependencies]
+ureq = { version = "3", default-features = false, features = ["native-tls-no-default", "gzip"] }
 
 [dev-dependencies]
 csv.workspace = true

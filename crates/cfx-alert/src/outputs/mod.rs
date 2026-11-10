@@ -87,7 +87,15 @@ pub struct HttpResponse {
 
 impl Http {
     pub fn new(timeout: Duration, retries: u32) -> Self {
-        let agent: ureq::Agent = ureq::Agent::config_builder()
+        let builder = ureq::Agent::config_builder();
+        #[cfg(windows)]
+        let builder = builder.tls_config(
+            ureq::tls::TlsConfig::builder()
+                .provider(ureq::tls::TlsProvider::NativeTls)
+                .root_certs(ureq::tls::RootCerts::PlatformVerifier)
+                .build(),
+        );
+        let agent: ureq::Agent = builder
             .timeout_global(Some(timeout))
             .http_status_as_error(false)
             .user_agent(concat!("clickfixed/", env!("CARGO_PKG_VERSION")))

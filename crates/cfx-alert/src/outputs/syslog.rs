@@ -5,7 +5,6 @@ use crate::config::{facility_code, SyslogConfig, SyslogFormat, SyslogTransport};
 use crate::schema::Alert;
 use std::io::Write;
 use std::net::{TcpStream, UdpSocket};
-use std::os::unix::net::UnixDatagram;
 use std::time::Duration;
 
 const MAX_MSG: usize = 1024;
@@ -33,6 +32,12 @@ impl Syslog {
             )
         })?;
         let transport = match cfg.transport {
+            SyslogTransport::Unix if cfg!(not(unix)) => {
+                return Err(
+                    "outputs.syslog.transport: \"unix\" needs a Unix socket; use \"udp\" or \"tcp\" on this platform"
+                        .into(),
+                )
+            }
             SyslogTransport::Unix => Transport::Unix(cfg.address.clone()),
             SyslogTransport::Udp => {
                 let s = UdpSocket::bind("0.0.0.0:0").map_err(|e| format!("syslog udp: {e}"))?;
@@ -89,6 +94,21 @@ fn bsd_time(alert: &Alert) -> String {
     .unwrap_or_default()
 }
 
+#[cfg(unix)]
+fn send_unix(msg: &str, path: &str) -> Result<(), String> {
+    let s = std::os::unix::net::UnixDatagram::unbound().map_err(|e| format!("syslog: {e}"))?;
+    s.send_to(msg.as_bytes(), path)
+        .map(|_| ())
+        .map_err(|e| format!("syslog {path}: {e}"))
+}
+
+#[cfg(not(unix))]
+fn send_unix(_msg: &str, path: &str) -> Result<(), String> {
+    Err(format!(
+        "syslog {path}: Unix sockets are not available on this platform"
+    ))
+}
+
 impl Output for Syslog {
     fn name(&self) -> &str {
         "syslog"
@@ -99,10 +119,7 @@ impl Output for Syslog {
         match &mut self.transport {
             Transport::Unix(path) => {
                 truncate(&mut msg, MAX_DATAGRAM);
-                let s = UnixDatagram::unbound().map_err(|e| format!("syslog: {e}"))?;
-                s.send_to(msg.as_bytes(), &*path)
-                    .map(|_| ())
-                    .map_err(|e| format!("syslog {path}: {e}"))
+                send_unix(&msg, path)
             }
             Transport::Udp(s) => {
                 truncate(&mut msg, MAX_DATAGRAM);

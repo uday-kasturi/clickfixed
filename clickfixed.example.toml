@@ -6,6 +6,7 @@ mode = "warn"
 # standard | engineering | admin | unknown. Tunes thresholds (admin = stricter). Never whitelists.
 role = "engineering"
 
+# Linux only. Windows always uses its process poller plus RunMRU.
 # proc: unprivileged /proc polling (lossy for very short-lived processes).
 # audit: tail auditd (root + `scripts/audit-rules.sh`).
 exec_source = "proc"
@@ -89,7 +90,8 @@ enabled = true
 # path = "/var/log/clickfixed/alerts.json"   # default: ~/.local/state/clickfixed/alerts.json
 # min_severity = "medium"
 
-# CEF over syslog. transport: unix (path) | udp | tcp (host:port).
+# CEF over syslog. transport: unix (path) | udp | tcp (host:port). Windows has no unix
+# socket: use udp or tcp there.
 [outputs.syslog]
 enabled = false
 transport = "unix"

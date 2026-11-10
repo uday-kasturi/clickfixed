@@ -40,7 +40,9 @@ pub struct Config {
     pub hash_buffer_ttl_secs: u64,
     #[serde(default = "d_exec")]
     pub exec_source: ExecSource,
+    /// auditd log for `exec_source = "audit"` (Linux only).
     #[serde(default = "d_audit")]
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
     pub audit_log: PathBuf,
     #[serde(default = "d_reports")]
     pub reports_dir: PathBuf,
@@ -76,11 +78,7 @@ fn d_true() -> bool {
     true
 }
 fn d_reports() -> PathBuf {
-    let base = std::env::var_os("XDG_STATE_HOME")
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/state")))
-        .unwrap_or_else(|| "/tmp".into());
-    base.join("clickfixed/reports")
+    cfx_alert::state_dir().join("reports")
 }
 fn d_pw() -> Vec<String> {
     [
@@ -93,6 +91,12 @@ fn d_pw() -> Vec<String> {
         "seahorse",
         "pass",
         "passmenu",
+        // Windows process names
+        "keepass",
+        "dashlane",
+        "nordpass",
+        "roboform",
+        "proton pass",
     ]
     .map(String::from)
     .to_vec()
@@ -110,14 +114,34 @@ fn d_browsers() -> Vec<String> {
         "vivaldi-bin",
         "opera",
         "librewolf",
+        // Windows process names
+        "vivaldi",
+        "arc",
+        "zen",
+        "waterfox",
     ]
     .map(String::from)
     .to_vec()
 }
 fn d_shells() -> Vec<String> {
-    ["bash", "zsh", "fish", "sh", "dash", "ksh", "pwsh", "nu"]
-        .map(String::from)
-        .to_vec()
+    let names: &[&str] = if cfg!(windows) {
+        // `run_dialog` is the parent reported for commands recorded in RunMRU. Explorer
+        // launches what the user starts from the desktop or Start; only programs that
+        // run their arguments (see correlate::runs_its_arguments) are scored.
+        &[
+            "cmd",
+            "powershell",
+            "pwsh",
+            "windowsterminal",
+            "explorer",
+            "run_dialog",
+            "bash",
+            "wsl",
+        ]
+    } else {
+        &["bash", "zsh", "fish", "sh", "dash", "ksh", "pwsh", "nu"]
+    };
+    names.iter().map(|s| s.to_string()).collect()
 }
 
 impl Default for Config {
@@ -145,10 +169,18 @@ impl Config {
                     .unwrap_or_else(|| ".".into());
                 Ok(c)
             }
-            None => Ok(Self {
-                config_dir: ".".into(),
-                ..Self::default()
-            }),
+            None => {
+                // The per-user config, if one exists: ~/.config/clickfixed/config.toml or
+                // %APPDATA%\clickfixed\config.toml.
+                let default = cfx_alert::config_dir().join("config.toml");
+                if default.is_file() {
+                    return Self::load(Some(&default));
+                }
+                Ok(Self {
+                    config_dir: ".".into(),
+                    ..Self::default()
+                })
+            }
         }
     }
 
