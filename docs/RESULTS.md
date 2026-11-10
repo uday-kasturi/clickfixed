@@ -34,7 +34,7 @@ none
 | fetch_and_execute | 13 | 40 | 39 | 10.40 | 1.00 |
 | finger_pipe | 1 | 0 | 0 | 1.20 | 0.00 |
 | hidden_window | 9 | 0 | 0 | 3.60 | 0.00 |
-| interpreter_entropy | 0 | 0 | 0 | 0.00 | 0.00 |
+| interpreter_entropy | 0 | 2 | 0 | 0.00 | 0.60 |
 | lolbin_chain | 1 | 0 | 0 | 0.50 | 0.00 |
 | media_ext_as_code | 4 | 0 | 0 | 3.60 | 0.00 |
 | mshta_remote | 2 | 0 | 0 | 2.40 | 0.00 |
@@ -50,7 +50,7 @@ none
 
 ## Fast-path latency
 
-85000 samples: p50 26.7 µs, p95 44.4 µs, p99 60.6 µs, max 1035.9 µs, over 5 ms budget: 0
+85000 samples: p50 45.3 µs, p95 83.0 µs, p99 108.0 µs, max 630.7 µs, over 5 ms budget: 0
 
 ## Allowlist regression
 

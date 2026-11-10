@@ -1,11 +1,24 @@
+# Build output
 /target
-corpus/benign_local.csv
 
-# local secrets (dev only)
+# Local secrets (dev only); .env.example is the committed template
 .env
 .env.*
 !.env.example
 
-# private working notes, not part of the release
+# Generated from your own shell history by scripts/import_history.py
+corpus/benign_local.csv
+
+# Private working notes, not part of the project
 CLICKFIXED_BUILD.md
 clickfix_commands - FP generators.csv
+
+# Editors, OS and tooling
+.idea/
+.vscode/
+*.swp
+*~
+.DS_Store
+__pycache__/
+*.pyc
+*.log

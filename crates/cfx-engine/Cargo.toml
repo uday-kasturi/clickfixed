@@ -5,6 +5,8 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+repository.workspace = true
+publish.workspace = true
 
 # INVARIANT: no OS-specific dependencies in this crate, ever.
 # CI builds it for wasm32-unknown-unknown to enforce that.

