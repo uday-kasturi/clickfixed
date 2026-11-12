@@ -10,7 +10,7 @@
 //! started was too short-lived for the poller. Those events report the parent as
 //! `run_dialog`.
 
-use super::util::{exe_name, process_image, read_user_string, wide};
+use super::util::{exe_name, process_image, read_user_string, user_key_write_time, wide};
 use crate::ExecEvent;
 use std::collections::{HashMap, HashSet};
 use std::ptr::null_mut;
@@ -157,14 +157,18 @@ pub fn poll_processes(tx: Sender<ExecEvent>, interval_ms: u64) {
     }
 }
 
-/// The most recent Run dialog command: (MRUList, command).
-fn latest_run() -> Option<(String, String)> {
+/// The most recent Run dialog command: (key last-write time, MRUList, command).
+///
+/// The write time matters: running the same command again leaves MRUList and the entry
+/// unchanged, but Explorer still rewrites the key.
+fn latest_run() -> Option<(u64, String, String)> {
+    let written = user_key_write_time(RUN_MRU).unwrap_or(0);
     let order = read_user_string(RUN_MRU, "MRUList")?;
     let first = order.chars().next()?.to_string();
     let cmd = read_user_string(RUN_MRU, &first)?;
     // Explorer stores each entry with a trailing "\1".
     let cmd = cmd.strip_suffix(r"\1").unwrap_or(&cmd).to_string();
-    Some((order, cmd))
+    Some((written, order, cmd))
 }
 
 pub fn watch_run_mru(tx: Sender<ExecEvent>, interval_ms: u64) {
@@ -173,7 +177,7 @@ pub fn watch_run_mru(tx: Sender<ExecEvent>, interval_ms: u64) {
         std::thread::sleep(Duration::from_millis(interval_ms));
         let cur = latest_run();
         if cur.is_some() && cur != last {
-            let (_, cmd) = cur.clone().unwrap();
+            let (_, _, cmd) = cur.clone().unwrap();
             let argv = split_args(&cmd);
             let ev = ExecEvent {
                 pid: 0,

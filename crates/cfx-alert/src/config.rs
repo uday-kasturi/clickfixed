@@ -11,7 +11,7 @@ use std::path::PathBuf;
 pub struct AlertsConfig {
     /// Override the host name stamped on alerts (default: system hostname).
     pub host: Option<String>,
-    /// Override the user name (default: $SUDO_USER, then $USER).
+    /// Override the user name (default: $SUDO_USER, then $USER; %USERNAME% on Windows).
     pub user: Option<String>,
     /// Severity bands, lowest to highest. One mapping for every output.
     #[serde(default = "default_bands")]

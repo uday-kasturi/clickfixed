@@ -30,6 +30,10 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
     WM_CLIPBOARDUPDATE,
 };
 
+/// Clipboard sequence number of our own last block-mode write. The writer window is
+/// destroyed right after writing, so the owner check alone can't recognise it.
+static OWN_SEQ: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
 /// Longest page URL read from a source-URL format.
 const MAX_URL_BYTES: usize = 8 * 1024;
 
@@ -104,6 +108,9 @@ fn on_update(st: &mut State) {
         return;
     }
     st.last_seq = seq;
+    if seq == OWN_SEQ.load(std::sync::atomic::Ordering::SeqCst) {
+        return; // our own block-mode replacement
+    }
     // SAFETY: returns NULL when no window owns the clipboard.
     let owner = unsafe { GetClipboardOwner() };
     let pid = window_pid(owner);
@@ -280,6 +287,11 @@ pub fn replace(text: &str) -> Result<(), String> {
         }
         Ok(())
     })();
+    if result.is_ok() {
+        // SAFETY: no preconditions.
+        let seq = unsafe { GetClipboardSequenceNumber() };
+        OWN_SEQ.store(seq, std::sync::atomic::Ordering::SeqCst);
+    }
     // SAFETY: the window belongs to this thread and is no longer used.
     unsafe { DestroyWindow(hwnd) };
     result

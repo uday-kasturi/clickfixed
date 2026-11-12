@@ -88,6 +88,8 @@ enabled = false
 [outputs.file]
 enabled = true
 # path = "/var/log/clickfixed/alerts.json"   # default: ~/.local/state/clickfixed/alerts.json
+# Windows default: %LOCALAPPDATA%\clickfixed\alerts.json. Write Windows paths in single
+# quotes, which TOML takes literally: path = 'C:\ProgramData\clickfixed\alerts.json'
 # min_severity = "medium"
 
 # CEF over syslog. transport: unix (path) | udp | tcp (host:port). Windows has no unix

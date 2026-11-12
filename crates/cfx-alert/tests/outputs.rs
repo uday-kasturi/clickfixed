@@ -293,7 +293,7 @@ fn slow_and_failing_webhooks_do_not_block_file_output() {
         r#"
         [outputs.file]
         enabled = true
-        path = "{}"
+        path = '{}'   # literal string: Windows paths contain backslashes
         [[outputs.webhook]]
         name = "hang"
         url = "{}/hook"

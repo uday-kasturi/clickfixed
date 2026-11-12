@@ -4,7 +4,8 @@ use std::ptr::{null, null_mut};
 use windows_sys::Win32::Foundation::{CloseHandle, HWND};
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows_sys::Win32::System::Registry::{
-    RegCloseKey, RegOpenKeyExW, RegQueryValueExW, HKEY, HKEY_CURRENT_USER, KEY_READ, REG_SZ,
+    RegCloseKey, RegOpenKeyExW, RegQueryInfoKeyW, RegQueryValueExW, HKEY, HKEY_CURRENT_USER,
+    KEY_READ, REG_SZ,
 };
 use windows_sys::Win32::System::Threading::{
     OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION,
@@ -117,6 +118,36 @@ pub fn hidden_window(class: &str, proc: WNDPROC, message_only: bool) -> Result<H
         } else {
             Ok(hwnd)
         }
+    }
+}
+
+/// Last-write time of a key under HKEY_CURRENT_USER (FILETIME as u64). Changes whenever
+/// any value in the key is written, even with identical data.
+pub fn user_key_write_time(subkey: &str) -> Option<u64> {
+    let sk = wide(subkey);
+    // SAFETY: only the FILETIME out-pointer is used; the key is closed on every path.
+    unsafe {
+        let mut key: HKEY = null_mut();
+        if RegOpenKeyExW(HKEY_CURRENT_USER, sk.as_ptr(), 0, KEY_READ, &mut key) != 0 {
+            return None;
+        }
+        let mut ft: windows_sys::Win32::Foundation::FILETIME = std::mem::zeroed();
+        let rc = RegQueryInfoKeyW(
+            key,
+            null_mut(),
+            null_mut(),
+            null(),
+            null_mut(),
+            null_mut(),
+            null_mut(),
+            null_mut(),
+            null_mut(),
+            null_mut(),
+            null_mut(),
+            &mut ft,
+        );
+        RegCloseKey(key);
+        (rc == 0).then_some(((ft.dwHighDateTime as u64) << 32) | ft.dwLowDateTime as u64)
     }
 }
 

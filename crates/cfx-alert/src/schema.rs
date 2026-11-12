@@ -667,9 +667,17 @@ impl Alert {
         a.rule.name = Action::PastedCommandExecuted.rule_name();
         a.clickfixed.signal = 2;
         if let Some(parent) = process.parent_name.clone() {
-            a.clickfixed.target = TargetOut {
-                kind: "terminal",
-                application: Some(parent),
+            // Windows reports commands run from Win+R (RunMRU) with this parent.
+            a.clickfixed.target = if parent == "run_dialog" {
+                TargetOut {
+                    kind: "run_dialog",
+                    application: Some("explorer".into()),
+                }
+            } else {
+                TargetOut {
+                    kind: "terminal",
+                    application: Some(parent),
+                }
             };
         }
         a.process = Some(process_out(process));

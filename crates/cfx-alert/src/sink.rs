@@ -61,7 +61,8 @@ fn host_name() -> String {
 }
 
 fn user_name() -> String {
-    ["SUDO_USER", "USER", "LOGNAME"]
+    // USERNAME is the Windows equivalent of USER.
+    ["SUDO_USER", "USER", "LOGNAME", "USERNAME"]
         .iter()
         .find_map(|k| std::env::var(k).ok().filter(|v| !v.is_empty()))
         .unwrap_or_else(|| "unknown".into())

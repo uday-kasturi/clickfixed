@@ -77,8 +77,16 @@ enum Cmd {
         cmd: AlertsCmd,
     },
     /// Score one command and print the verdict (no daemon).
+    ///
+    /// On Windows, Defender refuses to start any process whose command line contains a
+    /// ClickFix lure, so pass the command with `--file` or on stdin (`-`) instead.
     Check {
-        text: String,
+        /// The command to score, or `-` to read it from stdin.
+        #[arg(required_unless_present = "file")]
+        text: Option<String>,
+        /// Read the command from this file.
+        #[arg(long, conflicts_with = "text")]
+        file: Option<PathBuf>,
         #[arg(long)]
         config: Option<PathBuf>,
         /// Origin URL to classify (as if copied from this page).
@@ -235,7 +243,25 @@ fn main() {
         Cmd::Alerts { cmd } => alerts_cmd(cmd),
         #[cfg(windows)]
         Cmd::Autostart { cmd } => autostart_cmd(cmd),
-        Cmd::Check { text, config, url } => {
+        Cmd::Check {
+            text,
+            file,
+            config,
+            url,
+        } => {
+            let text = match (text.as_deref(), file) {
+                (_, Some(f)) => std::fs::read_to_string(&f)
+                    .unwrap_or_else(|e| die(&format!("{}: {e}", f.display()))),
+                (Some("-"), None) => {
+                    let mut s = String::new();
+                    std::io::Read::read_to_string(&mut std::io::stdin(), &mut s)
+                        .unwrap_or_else(|e| die(&format!("stdin: {e}")));
+                    s
+                }
+                (Some(t), None) => t.to_string(),
+                (None, None) => unreachable!("clap requires text or --file"),
+            };
+            let text = text.trim_end_matches(['\r', '\n']).to_string();
             let cfg = Config::load(config.as_deref()).unwrap_or_else(|e| die(&e));
             let origin = match url {
                 Some(u) => Origin::Browser {
